@@ -16,17 +16,30 @@ try {
     $env:SRC_KICK_CALIBRATION = '0'
     $env:SRC_SIMPLE_PASS = '1'
     $env:PYTHONIOENCODING = 'utf-8'
-    if (-not $KeepScene) {
-        $sceneOptions = @()
-        if ($SwapRobots) { $sceneOptions += '--swap-robots' }
-        & $passPython PythonScripts/tools/preliminary_scene.py @sceneOptions
-        if ($LASTEXITCODE -ne 0) { throw 'Scene reset failed' }
-    } else {
-        Write-Host 'Keeping current ball and robot positions. Starting a fresh strategy round.'
+    $nativeCrashCodes = @(-1073741819, -1073740940) # access violation, heap corruption
+    $maxAttempts = 4
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        if (-not $KeepScene) {
+            $sceneOptions = @()
+            if ($SwapRobots) { $sceneOptions += '--swap-robots' }
+            & $passPython PythonScripts/tools/preliminary_scene.py @sceneOptions
+            if ($LASTEXITCODE -ne 0) { throw 'Scene reset failed' }
+        } else {
+            Write-Host 'Keeping current ball and robot positions. Starting a fresh strategy round.'
+        }
+        # Let grSim publish a few complete vision cycles after replacing the scene.
+        Start-Sleep -Seconds 2
+        Write-Host "Starting strategy attempt $attempt/$maxAttempts"
+        & $passPython -X faulthandler -u PythonScripts/main.py --sim --team blue --side left
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -eq 0) { break }
+        if ($nativeCrashCodes -contains $exitCode -and $attempt -lt $maxAttempts) {
+            Write-Warning "Native C++ module exited with code $exitCode; retrying after 2 seconds"
+            Start-Sleep -Seconds 2
+            continue
+        }
+        throw "Strategy exited with code $exitCode after $attempt attempt(s); keep its error output for diagnosis"
     }
-    Start-Sleep -Milliseconds 700
-    & $passPython -X faulthandler -u PythonScripts/main.py --sim --team blue --side left
-    if ($LASTEXITCODE -ne 0) { throw "Strategy exited with code $LASTEXITCODE; keep its error output for diagnosis" }
 } finally {
     foreach ($name in $passPrevious.Keys) {
         [Environment]::SetEnvironmentVariable($name, $passPrevious[$name], 'Process')

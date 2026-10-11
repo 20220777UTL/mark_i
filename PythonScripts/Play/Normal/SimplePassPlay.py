@@ -52,6 +52,7 @@ class PassSequence(State):
         self.hold = {}
         self.reason = ''
         self.previous_ball = None
+        self.kick_origin = None
         self.last_held_pos = {}
         self.carry = {n: 0.0 for n in ROBOT_IDS}
         self.last_ball_seen = None
@@ -62,6 +63,8 @@ class PassSequence(State):
         self.entered = time.monotonic()
         self.stable_since = None
         self.last_log = 0
+        if phase in ('pass_out', 'pass_back', 'shoot'):
+            self.kick_origin = None
 
     def stable(self, condition):
         now = time.monotonic()
@@ -73,7 +76,9 @@ class PassSequence(State):
         return now - self.stable_since >= STABLE_SECONDS
 
     def has_ball(self, n):
-        if not Ball.valid() or not Player.valid(n):
+        now = time.monotonic()
+        if (self.last_ball_seen is None or now - self.last_ball_seen > BALL_GRACE_SECONDS
+                or self.last_player_seen[n] is None or now - self.last_player_seen[n] > PLAYER_GRACE_SECONDS):
             return False
         p = Player.pos(n)
         error = math.atan2(math.sin(face(p, Ball.pos()) - Player.direction(n)),
@@ -124,6 +129,8 @@ class PassSequence(State):
             front_error = abs(math.atan2(math.sin(face(p,b)-Player.direction(n)), math.cos(face(p,b)-Player.direction(n))))
             C.setDribbleCommand(n, 3)
             if p.dist(b) < 110 and angle_error < .12 and front_error < .30:
+                if self.kick_origin is None:
+                    self.kick_origin = copy_point(b)
                 kickStatus.setKick(n, power)
             behind = CGeoPoint(b.x()-85*math.cos(angle), b.y()-85*math.sin(angle))
             return C.makeItRushTo(n, behind, angle, 0, 0, MAX_ACC, True, CVector(0,0))
@@ -145,9 +152,9 @@ class PassSequence(State):
         valid = ball_recent and players_recent
 
         if self.phase == 'wait_ball':
-            # 替换场景后滤波速度可在静止球上短暂抖动。已确认球和两车
-            # 可见时即可开始；后续每个动作阶段仍保留到位与持球确认。
-            if valid:
+            # 替换场景后滤波速度可在静止球上短暂抖动。球和两车
+            # 连续可见一小段时间后开始；后续阶段仍确认到位与持球。
+            if self.stable(valid):
                 self.one, self.two = sorted(ROBOT_IDS, key=lambda n: (Player.pos(n).dist(Ball.pos()), n))
                 self.transition('get_ball', 'roles assigned by distance')
         elif self.phase not in ('done', 'fault'):
@@ -173,7 +180,7 @@ class PassSequence(State):
                 elif self.phase == 'pass_out':
                     actions[a] = self.kick(self.upper, PASS_POWER)
                     actions[b] = self.move(b, self.upper, Ball.pos(), True)
-                    if Ball.pos().dist(Player.pos(a)) > 260 and Ball.velMod() > 150:
+                    if self.kick_origin is not None and Ball.pos().dist(self.kick_origin) > 160 and Ball.velMod() > 150:
                         self.transition('receive_upper', 'first pass left role 1')
                 elif self.phase == 'receive_upper':
                     actions[b] = self.receive(b, self.upper)
@@ -189,7 +196,7 @@ class PassSequence(State):
                 elif self.phase == 'pass_back':
                     actions[b] = self.kick(self.lower, PASS_POWER)
                     actions[a] = self.move(a, self.lower, Ball.pos(), True)
-                    if Ball.pos().dist(Player.pos(b)) > 260 and Ball.velMod() > 150:
+                    if self.kick_origin is not None and Ball.pos().dist(self.kick_origin) > 160 and Ball.velMod() > 150:
                         self.transition('receive_lower', 'return pass left role 2')
                 elif self.phase == 'receive_lower':
                     actions[a] = self.receive(a, self.lower)
@@ -205,7 +212,7 @@ class PassSequence(State):
                         self.transition('shoot', 'role 1 aligned behind ball')
                 elif self.phase == 'shoot':
                     actions[a] = self.kick(self.goal, SHOT_POWER)
-                    if Ball.pos().dist(Player.pos(a)) > 260 and Ball.velMod() > 150:
+                    if self.kick_origin is not None and Ball.pos().dist(self.kick_origin) > 160 and Ball.velMod() > 150:
                         self.transition('shot_flight', 'role 1 shot')
                 elif self.phase == 'shot_flight':
                     old = self.previous_ball
