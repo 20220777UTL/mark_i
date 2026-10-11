@@ -1,6 +1,8 @@
 # Python
 __pycache__/
 *.py[cod]
+# Keep the required Windows strategy extension under version control.
+!CppPackage/CppPackage.pyd
 *.pyo
 *.pyc
 *.env
