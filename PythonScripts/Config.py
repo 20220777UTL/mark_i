@@ -55,6 +55,31 @@ Global.gameStrategies = {
 
 testStrategy = GameStrategy(ExampleNormalPlay())
 
+# Opt-in local preliminary practice; the existing example remains the default.
+import os
+if os.environ.get("SRC_PRELIM") == "1":
+    from Play.Normal.PreliminaryAttack import PreliminaryAttack, PreliminaryPracticeKeeper
+    Global.controlledRobotNumbers = (0,) if Global.isYellow else (1, 2)
+    testStrategy = GameStrategy(PreliminaryAttack(), PreliminaryPracticeKeeper())
+    Global.gameStrategies["NormalPlay"] = testStrategy
+
+if os.environ.get("SRC_KICK_CALIBRATION") == "1":
+    if not Global.isSimulation or Global.isYellow:
+        raise ValueError("Kick calibration is supported only for blue-team simulation")
+    if os.environ.get("SRC_KICK_SIMPLE") == "1":
+        from Play.Test.SimpleKickCalibration import SimpleKickCalibration as KickCalibration
+    else:
+        from Play.Test.KickCalibration import KickCalibration
+    Global.controlledRobotNumbers = (1,)
+    testStrategy = GameStrategy(KickCalibration())
+
+if os.environ.get("SRC_SIMPLE_PASS") == "1":
+    if not Global.isSimulation or Global.isYellow:
+        raise ValueError("Simple pass practice requires blue-team simulation")
+    from Play.Normal.SimplePassPlay import SimplePassPlay
+    Global.controlledRobotNumbers = (1, 2)
+    testStrategy = GameStrategy(SimplePassPlay())
+
 # 如需固定守门员车号，可在此设置并取消下面两行的注释。
 # Global.goalieNumber = 0
 # Global.defaultRoleNumberStructTable["G"] = Global.RoleNumberStruct(
