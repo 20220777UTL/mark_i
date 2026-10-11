@@ -23,6 +23,10 @@ MAX_ACC = 1000
 ARRIVE_DISTANCE = 160
 STABLE_SECONDS = .15
 STAGE_TIMEOUT = 25
+# 仿真多相机帧会偶发单帧 ball.Valid()==False；保留最近一次有效观测，
+# 避免起步条件因 0/1 闪烁永远无法稳定。
+BALL_GRACE_SECONDS = .30
+PLAYER_GRACE_SECONDS = .30
 
 
 def copy_point(p):
@@ -50,6 +54,8 @@ class PassSequence(State):
         self.previous_ball = None
         self.last_held_pos = {}
         self.carry = {n: 0.0 for n in ROBOT_IDS}
+        self.last_ball_seen = None
+        self.last_player_seen = {n: None for n in ROBOT_IDS}
 
     def transition(self, phase, reason):
         self.phase, self.reason = phase, reason
@@ -98,6 +104,10 @@ class PassSequence(State):
     def receive(self, n, point):
         if Player.pos(n).dist(Ball.pos()) < 650:
             return self.collect(n, face(Player.pos(n), Ball.pos()))
+        # 保守传球可能在接球点前方提前停下。球已慢下来时，接球队员
+        # 直接追球，而不是一直守在原定接球点。
+        if Ball.velMod() < 180:
+            return self.collect(n, face(Player.pos(n), Ball.pos()))
         return self.move(n, point, Ball.pos(), True)
 
     def collect(self, n, angle):
@@ -121,13 +131,23 @@ class PassSequence(State):
 
     def getTasks(self):
         now = time.monotonic()
+        if Ball.valid():
+            self.last_ball_seen = now
+        for n in ROBOT_IDS:
+            if Player.valid(n):
+                self.last_player_seen[n] = now
         for n in ROBOT_IDS:
             C.setDribbleCommand(n, 0)
         actions = {n: Skill.Stop() for n in ROBOT_IDS}
-        valid = Ball.valid() and all(Player.valid(n) for n in ROBOT_IDS)
+        ball_recent = self.last_ball_seen is not None and now - self.last_ball_seen <= BALL_GRACE_SECONDS
+        players_recent = all(self.last_player_seen[n] is not None and now - self.last_player_seen[n] <= PLAYER_GRACE_SECONDS
+                             for n in ROBOT_IDS)
+        valid = ball_recent and players_recent
 
         if self.phase == 'wait_ball':
-            if self.stable(valid and Ball.velMod() < 100):
+            # 替换场景后滤波速度可在静止球上短暂抖动。已确认球和两车
+            # 可见时即可开始；后续每个动作阶段仍保留到位与持球确认。
+            if valid:
                 self.one, self.two = sorted(ROBOT_IDS, key=lambda n: (Player.pos(n).dist(Ball.pos()), n))
                 self.transition('get_ball', 'roles assigned by distance')
         elif self.phase not in ('done', 'fault'):
@@ -215,10 +235,12 @@ class PassSequence(State):
         if self.phase in ('done', 'fault'):
             actions = {n: Skill.Stop() for n in ROBOT_IDS}
         if now-self.last_log > .5:
-            print('SIMPLE_PASS '+json.dumps(dict(t=round(now,3),phase=self.phase,reason=self.reason,
+            status = dict(t=round(now,3),phase=self.phase,reason=self.reason,
                   role1=self.one,role2=self.two,ball=[Ball.posX(),Ball.posY()],
                   robots={n:[Player.pos(n).x(),Player.pos(n).y(),Player.direction(n)] for n in ROBOT_IDS},
-                  carry=self.carry)),flush=True)
+                  carry=self.carry,ball_raw=Ball.valid(),ball_recent=ball_recent,
+                  players_raw={n: Player.valid(n) for n in ROBOT_IDS},players_recent=players_recent)
+            print('SIMPLE_PASS '+json.dumps(status),flush=True)
             self.last_log = now
         Global.debugEngine.gui_debug_msg(CGeoPoint(-2000,2600),f'{self.phase} role1={self.one} role2={self.two}',debug_color=1)
         if Ball.valid():
