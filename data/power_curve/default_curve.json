@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "Default Match Curve Profiles",
+    "description": "Editable distance(mm) -> power curves for flat/chip and Low/Normal/High."
+  },
+  "profiles": {
+    "flat": {
+      "limits": {
+        "min_power": 1000.0,
+        "max_power": 12700.0
+      },
+      "curves": {
+        "Low": {
+          "points": [
+            {
+              "position_mm": 0.0,
+              "power": 1461.1
+            },
+            {
+              "position_mm": 1971.8,
+              "power": 5676.5
+            },
+            {
+              "position_mm": 14887.3,
+              "power": 12687.0
+            }
+          ]
+        },
+        "Normal": {
+          "points": [
+            {
+              "position_mm": 0.0,
+              "power": 1752.4
+            },
+            {
+              "position_mm": 2489.4,
+              "power": 3070.3
+            },
+            {
+              "position_mm": 5028.2,
+              "power": 4676.9
+            },
+            {
+              "position_mm": 15000.0,
+              "power": 12700.0
+            },
+            {
+              "position_mm": 20000.0,
+              "power": 12700.0
+            }
+          ]
+        },
+        "High": {
+          "points": [
+            {
+              "position_mm": 0.0,
+              "power": 5060.0
+            },
+            {
+              "position_mm": 926.8,
+              "power": 7240.0
+            },
+            {
+              "position_mm": 1858.5,
+              "power": 9040.0
+            },
+            {
+              "position_mm": 3253.5,
+              "power": 10477.5
+            },
+            {
+              "position_mm": 8848.6,
+              "power": 12722.7
+            },
+            {
+              "position_mm": 18954.2,
+              "power": 12651.4
+            }
+          ]
+        }
+      }
+    },
+    "chip": {
+      "limits": {
+        "min_power": 1000.0,
+        "max_power": 12700.0
+      },
+      "curves": {
+        "Low": {
+          "points": [
+            {
+              "position_mm": 34.5,
+              "power": 1700.0
+            },
+            {
+              "position_mm": 2100.0,
+              "power": 2500.0
+            },
+            {
+              "position_mm": 2200.0,
+              "power": 2700.0
+            },
+            {
+              "position_mm": 4000.0,
+              "power": 12700.0
+            },
+            {
+              "position_mm": 15000.0,
+              "power": 12700.0
+            }
+          ]
+        },
+        "Normal": {
+          "points": [
+            {
+              "position_mm": 0.0,
+              "power": 1069.1
+            },
+            {
+              "position_mm": 1589.8,
+              "power": 1746.3
+            },
+            {
+              "position_mm": 1922.5,
+              "power": 2067.0
+            },
+            {
+              "position_mm": 3993.0,
+              "power": 12687.0
+            },
+            {
+              "position_mm": 15000.0,
+              "power": 12700.0
+            }
+          ]
+        },
+        "High": {
+          "points": [
+            {
+              "position_mm": 0.0,
+              "power": 2400.0
+            },
+            {
+              "position_mm": 1922.5,
+              "power": 7341.4
+            },
+            {
+              "position_mm": 2883.8,
+              "power": 10263.7
+            },
+            {
+              "position_mm": 3993.0,
+              "power": 12687.0
+            },
+            {
+              "position_mm": 15000.0,
+              "power": 12700.0
+            }
+          ]
+        }
+      }
+    }
+  }
+}

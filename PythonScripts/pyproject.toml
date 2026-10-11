@@ -1,0 +1,17 @@
+[project]
+name = "pythonscripts"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "==3.12.10"
+dependencies = [
+    "debugpy>=1.8.16",
+    "munkres>=1.1.4",
+    "PySide6>=6.8.0",
+    "pybind11>=3.0.1",
+    "pybind11-stubgen>=2.5.5",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true

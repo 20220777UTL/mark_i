@@ -1,0 +1,44 @@
+# Local Python environments. Keep pyproject.toml and uv.lock under version control.
+.venv/
+venv/
+env/
+ENV/
+VENV/
+
+# uv caches and local executables, if copied into the project.
+.uv/
+uv-cache/
+uv
+uv.exe
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Local secrets and machine-specific environment files
+.env
+.env.*
+!.env.example
+
+# macOS and editor metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.vscode/
+.idea/
+
+# Logs and simulator recordings
+/LOG/
+*.log
+
+# Windows debug symbols; keep the runtime .exe/.dll files.
+*.pdb
+
+# macOS/native build products
+*.dylib
+*.so
+*.dSYM/
+*.o
+*.a

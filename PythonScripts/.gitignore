@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyc
+*.env
+*.venv
+env/
+venv/
+ENV/
+VENV/
+.venv/
+.env/
+pip-log.txt
+pip-delete-this-directory.txt
+# PyCharm
+.idea/
+*.iml
+# VSCode
+.vscode/
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+# macOS
+.DS_Store
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+# Test and coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+# Logs
+*.log
+# Others
+*.sqlite3
+*.db
+*.egg-info/
+dist/
+build/
