@@ -236,50 +236,14 @@ class AttackSession:
                 'reason': policy.reason,
             }), flush=True)
             self.last_log = self.frame.time
-        Global.debugEngine.gui_debug_msg(
-            CGeoPoint(-2000, 2600),
-            f'Round {self.round_number}: {policy.phase} '
-            f'role1={policy.role1} role2={policy.role2} passes={policy.passes}',
-            debug_color=1)
 
     def _show_result(self):
-        # The Client's white background can use a different visual scale.
-        # Draw the small field, goal, and penalty area used by this practice play.
-        goal_x = Params.pitchLength / 2
-        half_width = Params.pitchWidth / 2
-        penalty_x = goal_x - Params.penaltyDepth
-        penalty_half_width = Params.penaltyWidth / 2
-        field_corners = (
-            (-goal_x, -half_width),
-            (goal_x, -half_width),
-            (goal_x, half_width),
-            (-goal_x, half_width),
-        )
-        for first, second in zip(field_corners, field_corners[1:] + field_corners[:1]):
-            Global.debugEngine.gui_debug_line(CGeoPoint(*first), CGeoPoint(*second), debug_color=5)
-        corners = (
-            (penalty_x, -penalty_half_width),
-            (goal_x, -penalty_half_width),
-            (goal_x, penalty_half_width),
-            (penalty_x, penalty_half_width),
-        )
-        for first, second in zip(corners, corners[1:] + corners[:1]):
-            Global.debugEngine.gui_debug_line(CGeoPoint(*first), CGeoPoint(*second), debug_color=5)
-        Global.debugEngine.gui_debug_line(
-            CGeoPoint(goal_x, -Params.goalWidth / 2),
-            CGeoPoint(goal_x, Params.goalWidth / 2), debug_color=4)
-        Global.debugEngine.gui_debug_msg(
-            CGeoPoint(penalty_x - 350, penalty_half_width + 300),
-            '9x6 GOAL / PENALTY', debug_color=5, size=145, weight=75)
+        # Keep one result label; the Client already draws the field geometry.
+        result = f'  {self.last_result}' if self.last_result else ''
         Global.debugEngine.gui_debug_msg(
             CGeoPoint(1800, 2600),
-            f'GOALS {self.goals}/{self.finished_rounds}',
-            debug_color=4, size=220, weight=75)
-        if self.last_result is not None:
-            Global.debugEngine.gui_debug_msg(
-                CGeoPoint(1800, 2250), self.last_result,
-                debug_color=4 if self.last_result.startswith('GOAL!') else 1,
-                size=180, weight=75)
+            f'GOALS {self.goals}/{self.finished_rounds}{result}',
+            debug_color=4, size=180, weight=75)
 
 
 class AttackState(State):
