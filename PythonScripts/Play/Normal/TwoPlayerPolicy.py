@@ -1,6 +1,6 @@
 """初赛双车决策。坐标毫米，朝 +x 进攻。1/2 是角色，不是车号。
 
-球权固定为：1 拿球 → 传给上角的 2 → 2 回传给下角的 1 → 1 再传给上角的 2 → 2 射门。
+球权固定为：1 拿球 → 传给上角的 2 → 1 跑到下角 → 2 传给 1 → 1 射门。
 换阶段只认到位、持球、出球、接球。计时只用于视觉去抖和超时失败，不能单独推进阶段。
 """
 from dataclasses import dataclass
@@ -160,10 +160,7 @@ class TwoPlayerPolicy:
             'receive_1': lambda f: self._play_receive(f, self.role2, self.upper, 'run_lower'),
             'run_lower': self._run_lower,
             'pass_2': lambda f: self._play_pass(f, self.role2, self.role1, 'receive_2'),
-            'receive_2': lambda f: self._play_receive(f, self.role1, self.lower, 'attract'),
-            'attract': self._attract,
-            'pass_3': lambda f: self._play_pass(f, self.role1, self.role2, 'receive_3'),
-            'receive_3': lambda f: self._play_receive(f, self.role2, self.upper, 'shoot'),
+            'receive_2': lambda f: self._play_receive(f, self.role1, self.lower, 'shoot'),
             'shoot': self._shoot,
             'shot_flight': self._shot_flight,
         }[self.phase](frame)
@@ -218,19 +215,6 @@ class TwoPlayerPolicy:
             self._change('pass_2', frame.time, 'role 1 arrived at the lower corner')
         return actions
 
-    def _attract(self, frame):
-        one, two = self.role1, self.role2
-        actions = {
-            one: self._stay(frame, one, self.upper),
-            two: self._go(frame, two, self.upper, dodge=True, dribble=False),
-        }
-        self._watch_holder(frame, one, self.upper)
-        if self.phase == 'fault':
-            return actions
-        if self._stable(frame, self._arrived(frame, two, self.upper) and self._secured(frame, one), HOLD_STABLE):
-            self._change('pass_3', frame.time, 'role 2 ready at the upper corner')
-        return actions
-
     def _play_pass(self, frame, passer, receiver, nxt):
         station = self.upper if receiver == self.role2 else self.lower
         released = self._released(frame, passer)
@@ -269,12 +253,12 @@ class TwoPlayerPolicy:
         return actions
 
     def _shoot(self, frame):
-        shooter = self.role2
+        shooter = self.role1
         target = self.open_goal(frame)
         released = self._released(frame, shooter)
         actions = {
             shooter: self._kick_or_hold(frame, shooter, target, SHOT_POWER, released),
-            self.role1: self._go(frame, self.role1, self.lower, dodge=True, dribble=False),
+            self.role2: self._idle(frame, self.role2),
         }
         self._watch_holder(frame, shooter, target)
         if self.phase == 'fault':
@@ -283,7 +267,7 @@ class TwoPlayerPolicy:
             self._clear_carry(shooter)
             self.shot_shift = round(self.possession_shift, 1)
             self.shooter_id = shooter
-            self._change('shot_flight', frame.time, 'role 2 shot')
+            self._change('shot_flight', frame.time, 'role 1 shot')
         return actions
 
     def _shot_flight(self, frame):
@@ -616,7 +600,7 @@ class TwoPlayerPolicy:
         if not frame.valid:
             return
         speed = hypot(*frame.velocity) / 1000
-        if self.kick_armed or self.passes or self.phase in ('shot_flight', 'receive_1', 'receive_2', 'receive_3'):
+        if self.kick_armed or self.passes or self.phase in ('shot_flight', 'receive_1', 'receive_2'):
             self.flight_peak = max(self.flight_peak, speed)
             self.peak_m_s = max(self.peak_m_s, speed)
 

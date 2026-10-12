@@ -143,16 +143,16 @@ class GateTests(unittest.TestCase):
         policy.phase = 'shoot'
         policy.role1, policy.role2 = 1, 2
         policy.entered = 0.0
-        policy.hold[2] = (2959, 1232)
-        ball = (2938, 1120)
+        policy.hold[1] = (2959, -1232)
+        ball = (2938, -1120)
         ours = {
-            1: robot(3190, -1290),
-            2: robot(2957, 1228, face((2957, 1228), ball), infrared=True),
+            1: robot(2957, -1228, face((2957, -1228), ball), infrared=True),
+            2: robot(3190, 1290),
         }
         actions = policy.tick(frame(0.2, ball=ball, ours=ours))
-        point = actions[2].pos
-        self.assertFalse(policy._path_hits((2957, 1228), point, ball, 130))
-        self.assertFalse(actions[2].dribble)
+        point = actions[1].pos
+        self.assertFalse(policy._path_hits((2957, -1228), point, ball, 130))
+        self.assertFalse(actions[1].dribble)
         self.assertGreater(hypot(point[0] - policy.pass_anchor[0], point[1] - policy.pass_anchor[1]), 100)
 
     def test_shoots_when_ball_is_controlled_and_nearly_aligned(self):
@@ -160,11 +160,11 @@ class GateTests(unittest.TestCase):
         policy.phase = 'shoot'
         policy.role1, policy.role2 = 1, 2
         policy.entered = 0.0
-        policy.hold[2] = (2917, 929)
-        policy.kick_pose = (2917, 929)
-        ball = (3015, 810)
-        ours = {1: robot(3200, -1300), 2: robot(2925, 896, -0.37, infrared=True, speed=350)}
-        action = policy.tick(frame(0.2, ball=ball, ours=ours))[2]
+        policy.hold[1] = (2917, -929)
+        policy.kick_pose = (2917, -929)
+        ball = (3015, -810)
+        ours = {1: robot(2925, -896, 0.64, infrared=True, speed=350), 2: robot(3200, 1300)}
+        action = policy.tick(frame(0.2, ball=ball, ours=ours))[1]
         self.assertEqual(action.power, SHOT_POWER)
 
     def test_open_side_is_away_from_the_keeper(self):
@@ -212,7 +212,7 @@ class GateTests(unittest.TestCase):
 
 
 class SimulationTests(unittest.TestCase):
-    def test_three_passes_then_role_two_scores_from_several_starts(self):
+    def test_two_passes_then_role_one_scores_from_several_starts(self):
         cases = [
             ((1800, 550), {1: (1500, 550), 2: (2200, -850)}, 1),
             ((1800, 550), {1: (2200, -850), 2: (1500, 550)}, 2),
@@ -223,11 +223,11 @@ class SimulationTests(unittest.TestCase):
             with self.subTest(ball=ball, robots=robots):
                 policy = simulate(ball, robots)
                 self.assertEqual(policy.phase, 'done', policy.reason)
-                self.assertEqual(policy.passes, 3)
+                self.assertEqual(policy.passes, 2)
                 self.assertEqual(policy.role1, expected_role1)
-                self.assertEqual(policy.shooter_id, policy.role2)
-                self.assertEqual(policy.shooter_id, 3 - expected_role1)
-                self.assertEqual(len(policy.pass_shifts), 3)
+                self.assertEqual(policy.shooter_id, policy.role1)
+                self.assertEqual(policy.shooter_id, expected_role1)
+                self.assertEqual(len(policy.pass_shifts), 2)
                 self.assertTrue(all(shift < DRIBBLE_LIMIT for shift in policy.pass_shifts))
                 self.assertLess(policy.shot_shift, DRIBBLE_LIMIT)
                 self.assertLessEqual(policy.peak_m_s, 6.0)
@@ -237,16 +237,16 @@ class SimulationTests(unittest.TestCase):
         seen = []
 
         def watch(policy, actions):
-            if policy.phase not in ('pass_1', 'pass_2', 'pass_3', 'shoot'):
+            if policy.phase not in ('pass_1', 'pass_2', 'shoot'):
                 return
-            passer = policy.role2 if policy.phase in ('pass_2', 'shoot') else policy.role1
+            passer = policy.role2 if policy.phase == 'pass_2' else policy.role1
             action = actions[passer]
             if action.power is None:
                 return
             seen.append((policy.phase, action.pos, policy.hold[passer], action.power, action.dribble))
 
         simulate((1800, 550), {1: (1500, 550), 2: (2200, -850)}, watch)
-        self.assertGreaterEqual(len({phase for phase, *_ in seen}), 4)
+        self.assertGreaterEqual(len({phase for phase, *_ in seen}), 3)
         for phase, pos, hold, power, dribble in seen:
             self.assertLess(hypot(pos[0] - hold[0], pos[1] - hold[1]), 1.0)
             expected = SHOT_POWER if phase == 'shoot' else PASS_POWER

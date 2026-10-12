@@ -36,6 +36,13 @@ __pycache__/
 # Windows debug symbols; keep the runtime .exe/.dll files.
 *.pdb
 
+# Medusa.exe loads the local Python runtime after Windows environment setup.
+/Lib/
+/DLLs/
+/python3.dll
+/python312.dll
+/.client_practice_enabled
+
 # macOS/native build products
 *.dylib
 *.so

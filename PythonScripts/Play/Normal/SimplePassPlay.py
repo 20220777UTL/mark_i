@@ -1,11 +1,13 @@
-"""SRC 初赛 NormalPlay：两车三次传球，由角色 2 射门。
+"""SRC 初赛 NormalPlay：两车两次传球，由角色 1 射门。
 
 每个比赛阶段都是 RoleMatch_LuaStyle.State；transFunction 返回下一状态名。
 角色 1/2 在每回合球静止后按离球距离确定，本回合不重新匹配。
 """
 import json
+import subprocess
 import time
 from math import hypot
+from pathlib import Path
 
 import CppPackage as C
 import Global
@@ -35,6 +37,7 @@ class AttackSession:
     def __init__(self):
         self.round_number = 0
         self.last_log = 0.0
+        self.scene_prepared = False
         self.reset()
 
     def reset(self):
@@ -83,6 +86,16 @@ class AttackSession:
         return frame, available
 
     def step(self):
+        if Global.autoPreparePreliminaryScene and not self.scene_prepared:
+            # Medusa's embedded Winsock state rejects Python socket.sendto
+            # (WSAEFAULT). Run the existing scene sender in its venv instead.
+            root = Path(__file__).resolve().parents[3]
+            subprocess.run(
+                [str(root / 'PythonScripts' / '.venv' / 'Scripts' / 'python.exe'),
+                 str(root / 'PythonScripts' / 'tools' / 'preliminary_scene.py')],
+                cwd=root, check=True, timeout=5)
+            self.scene_prepared = True
+            print('PRELIM_SCENE blue=1,2 yellow=0 ball=(1800,550)', flush=True)
         frame, available = self.observe()
         for n in self.ids or available:
             C.setDribbleCommand(n, 0)
@@ -269,18 +282,6 @@ class Receive2(AttackState):
     phase_name = 'receive_2'
 
 
-class Attract(AttackState):
-    phase_name = 'attract'
-
-
-class Pass3(AttackState):
-    phase_name = 'pass_3'
-
-
-class Receive3(AttackState):
-    phase_name = 'receive_3'
-
-
 class Shoot(AttackState):
     phase_name = 'shoot'
 
@@ -309,7 +310,7 @@ class Recover(State):
 
 @declare_state_machine(
     Assign, GetBall, WaitUpper, Pass1, Receive1, RunLower,
-    Pass2, Receive2, Attract, Pass3, Receive3, Shoot, ShotFlight, Recover)
+    Pass2, Receive2, Shoot, ShotFlight, Recover)
 class SimplePassPlay(StateMachine):
     def __init__(self):
         super().__init__()

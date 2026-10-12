@@ -4,6 +4,9 @@
 """
 
 import Global
+import os
+import sys
+from pathlib import Path
 from Play.Normal.ExampleNormalPlay import ExampleNormalPlay
 from Play.Normal.SimplePassPlay import SimplePassPlay
 from Play.RefPlay.ExampleKickOff import ExampleKickOff
@@ -56,8 +59,24 @@ Global.gameStrategies = {
 
 testStrategy = GameStrategy(ExampleNormalPlay())
 
-# Opt-in local practice modes; formal NormalPlay above remains the default.
-import os
+# Client's blue/yellow Medusa buttons read this file directly. In simulation,
+# run the two-attacker/one-practice-keeper scenario without a separate shell.
+Global.autoPreparePreliminaryScene = False
+clientPractice = (
+    Global.isSimulation and Path(sys.executable).name.lower() == 'medusa.exe' and
+    (Path(__file__).resolve().parents[1] / '.client_practice_enabled').is_file() and
+    not any(os.environ.get(name) == '1' for name in
+            ('SRC_PRELIM', 'SRC_KICK_CALIBRATION', 'SRC_SIMPLE_PASS'))
+)
+if clientPractice:
+    from Play.Normal.PreliminaryAttack import PreliminaryPracticeKeeper
+
+    Global.controlledRobotNumbers = (0,) if Global.isYellow else (1, 2)
+    Global.isTestMode = True
+    testStrategy = GameStrategy(SimplePassPlay(), PreliminaryPracticeKeeper())
+    Global.autoPreparePreliminaryScene = not Global.isYellow
+
+# Explicit local calibration/legacy modes still override the Client default.
 if os.environ.get("SRC_PRELIM") == "1":
     from Play.Normal.PreliminaryAttack import PreliminaryAttack, PreliminaryPracticeKeeper
     Global.controlledRobotNumbers = (0,) if Global.isYellow else (1, 2)
@@ -82,6 +101,12 @@ if os.environ.get("SRC_SIMPLE_PASS") == "1":
     Global.controlledRobotNumbers = (1, 2)
     Global.isTestMode = True
     testStrategy = GameStrategy(SimplePassPlay())
+
+if clientPractice:
+    from ClientPractice import stage_next_team
+
+    stage_next_team('zss.ini', Global.isYellow)
+    print(f'CLIENT_NEXT_TEAM {"blue/left" if Global.isYellow else "yellow/right"}', flush=True)
 
 # 如需固定守门员车号，可在此设置并取消下面两行的注释。
 # Global.goalieNumber = 0
