@@ -3,6 +3,7 @@
 不使用点球；人工摆球期间沿用 GameHalt，所有车辆停止并关闭吸球和踢球。
 """
 
+import os
 import Global
 from Play.Normal.ExampleNormalPlay import ExampleNormalPlay
 from Play.RefPlay.ExampleKickOff import ExampleKickOff
@@ -55,6 +56,12 @@ Global.gameStrategies = {
 }
 
 testStrategy = GameStrategy(two_attack())
+
+if os.environ.get("SRC_CORNER_PASS_TEST") == "1":
+    from Play.Test.Test_CornerPassShot import Test_CornerPassShot, PASSER, RECEIVER
+    Global.isTestMode = True
+    Global.controlledRobotNumbers = (PASSER, RECEIVER)
+    testStrategy = GameStrategy(Test_CornerPassShot())
 
 # 如需固定守门员车号，可在此设置并取消下面两行的注释。
 # Global.goalieNumber = 0

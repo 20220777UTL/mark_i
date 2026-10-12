@@ -1,0 +1,78 @@
+底角传球接射：单次仿真测试
+
+目的
+验证现有 StaticGetBall(target, kickPower, chipPower) 能否在来球过程中调整并迅速射门。
+这里没有另写底层一脚射门技能，也没有把“球进门”当成“一脚射门成功”的证明。
+Ubuntu 已验证 Python 语法和模拟接口下的状态逻辑；Windows 原生技能和球物理尚未实测。
+
+文件
+PythonScripts/Play/Test/Test_CornerPassShot.py：测试策略和参数。
+PythonScripts/Config.py：增加环境变量开关，未启用时仍使用原来的 two_attack。
+PythonScripts/tests/test_corner_pass_shot.py：不加载 C++ 的调度测试。
+
+Windows 启动
+1. 同步包含这三个文件的代码；若收到补丁 ZIP，在仓库根目录解压覆盖。
+   覆盖前保留你自己对 Config.py 的修改。本包不包含 exe、dll 或 Python 环境。
+2. 先关闭已有的 Client/Medusa 策略进程，以免两个策略同时控制一队。
+3. 在 VS Code 的 PowerShell 终端进入仓库根目录（能看到 Client.exe 的目录）：
+     $env:SRC_CORNER_PASS_TEST = "1"
+     .\Client.exe
+   从这个新启动的 Client 按培训流程启动模拟器、视觉和策略。
+   如果原来是单独启动 Medusa，也须在设置了此变量的同一个终端启动。
+   环境变量不会传给已经打开的程序。
+4. 只启动我方一队的策略，选蓝队、左半场（向 +x 球门进攻）进行第一次测试。
+   队友的其他策略/另一队先关闭，场上先不放守门员。
+   本测试固定控制蓝队 1、2 号，确认模拟器实际车号一致。
+5. 先摆好球和车，再启动策略；每次试验只运行一轮，完成后保持停止。
+   重试时停止策略，重新摆球，然后重新启动策略进程。
+
+摆球：单位 mm，以下是 9000 × 6000 小场、向 +x 进攻的例子
+球： (3900, -2400)，先保持静止。
+A，1 号传球车：约 (3950, -2570)，朝向约 +105°，朝球和接应点。
+B，2 号接射车： (3150, 0)，朝向 0°，面向对方球门 (4500, 0)。
+车辆允许稍微摆偏，SETUP 会自动移动到测试点；球不会自动复位。
+如果球不在上述位置附近，SETUP 会等待，20 秒后停止。
+不要把 B 放进禁区。B 中心距禁区线 350 mm，避免车身压线。
+
+场地参数不同时，代码自动按 Params 计算：
+球 = (pitchLength/2 - 600, -pitchWidth/2 + 600)
+B = (pitchLength/2 - penaltyDepth - 350, 0)
+A = 球沿“接应点指向球”的方向后退 180 mm
+传球目标 = B 朝球门一侧的球口（中心前方 playerFrontToCenter + 22 mm）
+使用与 Params 一致的模拟器场地；如果换到右侧，须确认策略坐标变换后再镜像摆球。
+
+运行时看什么
+SETUP：两车到位、朝向正确、速度较低，稳定 0.3 秒后进入 PASS。
+PASS：A 使用 StaticGetBall 向 B 球口平传，B 保持位置、朝球门。
+RECEIVE_SHOOT：球离开原位超过 100 mm、速度大于 400 mm/s 且朝接应点运动时，
+立即停 A，并让 B 使用 StaticGetBall 向球门平射，不等红外持球信号。
+DONE：超时、视觉丢失、接近禁区边界、球出界或检测到疑似射门后停下。
+PASS 最长 8 秒，RECEIVE_SHOOT 最长 6 秒；没有自动下一轮。
+日志前缀为 [corner-pass]。possible shot 只是运动学候选，不保证触球、进球或一脚射门。
+“near-ball 后耗时”从球进入距 B 中心 220 mm 开始计时，不是实际触球时间。
+
+建议第一轮记录
+录屏保留从传球前到射门后的完整过程，并保留控制台日志：
+1. A 是否真的传出球；是否传到 B 前方而非撞 B 车身。
+2. B 是否在来球途中开始微调；是否过早迎球离开接应点。
+3. B 是否触球即踢，还是吸住、转身、再射；慢放确认。
+4. 失败属于球不到位、接球角度不对、技能接射慢，还是原生运行报错。
+先无守门员连续做几轮，确认传球和接射，再放入官方守门员测实用效果。
+
+调参
+优先保持位置不变，只改脚本顶部 PASS_LEVEL（P.LOW / P.NORMAL / P.HIGH）。
+力度通过仓库 evalPower 计算，chipPower=0；力度数值不是实际球速。
+没有实测前，不认为默认曲线已校准，也不保证符合比赛球速要求。
+接射阶段的路径和朝向由原生 StaticGetBall 决定，本脚本不保证它一定不控球。
+禁区检测是每帧停止条件，不是底层运动规划的绝对避障保证。
+
+停止与恢复
+这是 isTestMode 测试，不能依赖裁判盒 Stop 来中止。
+需要随时停止时，停止策略/Medusa，并使用模拟器暂停确认车辆停止。
+恢复原策略：关闭本次 Client/策略，在同一个 PowerShell 执行：
+  Remove-Item Env:SRC_CORNER_PASS_TEST -ErrorAction SilentlyContinue
+再启动 Client。不要把该测试开关留到正式比赛。
+
+Ubuntu 自检（仓库根目录）
+  PythonScripts/.venv/bin/python -m unittest discover -s PythonScripts/tests -p 'test_corner_pass_shot.py'
+此测试不代替 Windows 仿真，也不能验证实际接射速度。
