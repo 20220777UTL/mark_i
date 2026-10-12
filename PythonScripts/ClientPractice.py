@@ -19,8 +19,9 @@ def stage_next_team(config_path, current_yellow):
     block = section.group(1)
     next_value = b'false' if current_yellow else b'true'
     for key in (b'IsYellow', b'IsRight'):
-        pattern = rb'(?m)^' + key + rb'=(?:true|false)(?=\r?$)'
-        block, count = re.subn(pattern, key + b'=' + next_value, block, count=1)
+        pattern = rb'(?m)^(' + key + rb'[ \t]*=[ \t]*)(?:true|false)(?=[ \t]*\r?$)'
+        block, count = re.subn(pattern, lambda match: match.group(1) + next_value,
+                               block, count=1)
         if count != 1:
             raise ValueError(f'zss.ini lacks a boolean {key.decode()} entry')
     updated = original[:section.start(1)] + block + original[section.end(1):]
