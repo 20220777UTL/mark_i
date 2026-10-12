@@ -96,13 +96,13 @@ class PreliminaryAttack(StateMachine):
 class PracticeKeeperState(State):
     def getTasks(self):
         C.setDribbleCommand(0, 0)
-        # This Client/grSim practice scene puts yellow's own goal on the right.
+        # Yellow's right-side goal is negative X in Medusa's normalized coordinates.
         bx, by = Ball.posX(), Ball.posY()
         y = max(-350, min(350, by*.35))
-        x = Params.pitchLength/2 - 180
-        if bx > 2200:
-            x -= min(450, (bx-2200)*.3)
-        return {"G": Task(Skill.RushTo(CGeoPoint(x, y), angle=math.pi, maxAcc=800), fixedNumber=0)}
+        x = -Params.pitchLength/2 + 180
+        if bx < -2200:
+            x += min(450, (-bx-2200)*.3)
+        return {"G": Task(Skill.Goalie(CGeoPoint(x, y)), fixedNumber=0)}
 
     def getMatchString(self):
         return ""
