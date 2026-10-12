@@ -36,6 +36,9 @@ class AttackSession:
 
     def __init__(self):
         self.round_number = 0
+        self.finished_rounds = 0
+        self.goals = 0
+        self.last_result = None
         self.last_log = 0.0
         self.scene_prepared = False
         self.reset()
@@ -157,6 +160,7 @@ class AttackSession:
 
     def recover(self):
         frame, available = self.observe(allow_new_policy=False)
+        self._show_result()
         for n in self.ids or available:
             C.setDribbleCommand(n, 0)
         self.actions = {n: Action('stop') for n in self.ids or available}
@@ -191,6 +195,12 @@ class AttackSession:
         if self.reported or policy.phase not in ('done', 'fault'):
             return
         self.reported = True
+        self.finished_rounds += 1
+        scored = policy.phase == 'done'
+        if scored:
+            self.goals += 1
+        self.last_result = (f'GOAL!  Round {self.round_number}' if scored else
+                            f'NO GOAL  Round {self.round_number}')
         print('PRELIM_RESULT ' + json.dumps({
             'round': self.round_number,
             'ok': policy.phase == 'done',
@@ -206,6 +216,7 @@ class AttackSession:
 
     def _show_debug(self):
         policy = self.policy
+        self._show_result()
         if self.frame.time - self.last_log > LOG_PERIOD_SECONDS:
             print('PRELIM ' + json.dumps({
                 'round': self.round_number,
@@ -230,6 +241,45 @@ class AttackSession:
             f'Round {self.round_number}: {policy.phase} '
             f'role1={policy.role1} role2={policy.role2} passes={policy.passes}',
             debug_color=1)
+
+    def _show_result(self):
+        # The Client's white background can use a different visual scale.
+        # Draw the small field, goal, and penalty area used by this practice play.
+        goal_x = Params.pitchLength / 2
+        half_width = Params.pitchWidth / 2
+        penalty_x = goal_x - Params.penaltyDepth
+        penalty_half_width = Params.penaltyWidth / 2
+        field_corners = (
+            (-goal_x, -half_width),
+            (goal_x, -half_width),
+            (goal_x, half_width),
+            (-goal_x, half_width),
+        )
+        for first, second in zip(field_corners, field_corners[1:] + field_corners[:1]):
+            Global.debugEngine.gui_debug_line(CGeoPoint(*first), CGeoPoint(*second), debug_color=5)
+        corners = (
+            (penalty_x, -penalty_half_width),
+            (goal_x, -penalty_half_width),
+            (goal_x, penalty_half_width),
+            (penalty_x, penalty_half_width),
+        )
+        for first, second in zip(corners, corners[1:] + corners[:1]):
+            Global.debugEngine.gui_debug_line(CGeoPoint(*first), CGeoPoint(*second), debug_color=5)
+        Global.debugEngine.gui_debug_line(
+            CGeoPoint(goal_x, -Params.goalWidth / 2),
+            CGeoPoint(goal_x, Params.goalWidth / 2), debug_color=4)
+        Global.debugEngine.gui_debug_msg(
+            CGeoPoint(penalty_x - 350, penalty_half_width + 300),
+            '9x6 GOAL / PENALTY', debug_color=5, size=145, weight=75)
+        Global.debugEngine.gui_debug_msg(
+            CGeoPoint(1800, 2600),
+            f'GOALS {self.goals}/{self.finished_rounds}',
+            debug_color=4, size=220, weight=75)
+        if self.last_result is not None:
+            Global.debugEngine.gui_debug_msg(
+                CGeoPoint(1800, 2250), self.last_result,
+                debug_color=4 if self.last_result.startswith('GOAL!') else 1,
+                size=180, weight=75)
 
 
 class AttackState(State):
