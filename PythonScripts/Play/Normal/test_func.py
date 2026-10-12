@@ -7,10 +7,12 @@ from Vision import Player
 from WorldModel import *
 import time
 
+
+
 class test(State):
     def getTasks(self):
         return {
-            "A": Task(StaticGetBall(target=Positions.theirGoal, kickPower=16000, chipPower=300), fixedNumber=1)
+            "A": Task(RushTo(pos=Ball.pos(), angle=Player.toBallDir(1), flag=Flags.quickly, needDribble=True), fixedNumber=1)
         }
     def getMatchString(self) -> str:
         return ""

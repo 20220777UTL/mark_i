@@ -5,6 +5,7 @@
 
 import Global
 from Play.Normal.ExampleNormalPlay import ExampleNormalPlay
+from Play.Normal.test_func import testMachine
 from Play.RefPlay.ExampleKickOff import ExampleKickOff
 from Play.RefPlay.ExampleKickOffDefend import ExampleKickOffDefend
 from Play.RefPlay.ExampleFreeKick import ExampleFreeKick
@@ -14,6 +15,7 @@ from Play.RefPlay.GameStop import GameStop
 from Play.RefPlay.OurTimeout import OurTimeout
 from Play.Test.Test_Goalie2022 import Test_Goalie2022
 from Play.Normal.two_attack import two_attack
+from Play.Normal.zz import zz
 
 
 Global.isTestMode = True
@@ -54,7 +56,7 @@ Global.gameStrategies = {
     "USE_ZPASS": False,
 }
 
-testStrategy = GameStrategy(two_attack())
+testStrategy = GameStrategy(zz())
 
 # 如需固定守门员车号，可在此设置并取消下面两行的注释。
 # Global.goalieNumber = 0
