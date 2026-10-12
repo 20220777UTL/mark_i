@@ -6,8 +6,10 @@
 from dataclasses import dataclass
 from math import atan2, cos, hypot, sin, pi
 
-PASS_POWER = 6000
-SHOT_POWER = 10000
+# Command ceilings, not ball speeds. PowerCalculator chooses the actual command;
+# a real grSim/robot speed check is still required before competition.
+PASS_POWER = 7000
+SHOT_POWER = 12000
 STAGE_TIMEOUT = 30.0
 HOLD_STABLE = 0.15
 RELEASE_STABLE = 0.10
@@ -49,6 +51,7 @@ class Action:
     dodge: bool = False
     dribble: bool = False
     power: float | None = None
+    kick_target: tuple | None = None
 
 
 def distance(a, b):
@@ -67,10 +70,14 @@ class TwoPlayerPolicy:
     IDS = (1, 2)
 
     def __init__(self, half_length=4500, half_width=3000, penalty_depth=1000,
-                 penalty_width=2000, goal_width=1000):
+                 penalty_width=2000, goal_width=1000, ids=(1, 2)):
+        if len(ids) != 2 or ids[0] == ids[1]:
+            raise ValueError('exactly two distinct attacker IDs are required')
+        self.IDS = tuple(ids)
         self.half_length = half_length
         self.goal_width = goal_width
         self.penalty_front = half_length - penalty_depth
+        self.own_penalty_front = -self.penalty_front
         self.penalty_half_width = penalty_width / 2
         self.limit_x = self.penalty_front - 150
         self.limit_y = half_width - 200
@@ -100,6 +107,9 @@ class TwoPlayerPolicy:
         self.anchor_fixes = 0
         self.setup_mm = []
         self.vision_bad_since = None
+        self.carried_mm = {n: 0.0 for n in self.IDS}
+        self.peak_carried_mm = {n: 0.0 for n in self.IDS}
+        self.carrier_last_pos = {n: None for n in self.IDS}
 
     def tick(self, frame):
         self._note_speed(frame)
@@ -112,8 +122,17 @@ class TwoPlayerPolicy:
                 self.fail('vision unavailable')
             return self._stops()
         self.vision_bad_since = None
-        if self._robot_inside(frame):
-            self.fail('robot entered opponent penalty area')
+        self._track_carry(frame)
+        if any(self.carried_mm[n] > 800 for n in self.IDS):
+            self.fail('continuous dribble exceeded 800 mm safety budget')
+            return self._stops()
+        if self._robot_inside(frame) or self._robot_inside_own(frame):
+            self.fail('attacker entered a penalty area')
+            return self._stops()
+        if ((self._ball_in_penalty(frame.ball) or self._ball_in_own_penalty(frame.ball))
+                and any(distance(robot.pos, frame.ball) < 150
+                        for robot in frame.ours.values())):
+            self.fail('attacker too close to ball in a penalty area')
             return self._stops()
         if self.entered is None:
             self.entered = frame.time
@@ -150,7 +169,11 @@ class TwoPlayerPolicy:
         }[self.phase](frame)
 
     def _assign(self, frame):
-        if self._stable(frame, True, HOLD_STABLE):
+        if self._ball_in_penalty(frame.ball) or self._ball_in_own_penalty(frame.ball):
+            self.fail('placed ball is in a penalty area')
+            return self._stops()
+        # Roles are chosen only after the manually placed ball has settled.
+        if self._stable(frame, hypot(*frame.velocity) < 120, HOLD_STABLE):
             self.role1, self.role2 = sorted(
                 self.IDS, key=lambda n: (distance(frame.ours[n].pos, frame.ball), n))
             self._change('get_ball', frame.time, 'roles assigned by distance')
@@ -158,15 +181,13 @@ class TwoPlayerPolicy:
 
     def _get_ball(self, frame):
         one, two = self.role1, self.role2
-        anchor = self._anchor_point(frame.ball, self.upper)
         actions = {
             one: self._collect(frame, one, self.upper),
             two: self._go(frame, two, self.upper, dodge=True, dribble=False),
         }
-        robot = frame.ours[one]
-        lined_up = distance(robot.pos, anchor) < 70 and angle_error(
-            robot.angle, self._face_point(robot.pos, frame.ball, robot.angle)) < 0.25
-        if self._stable(frame, self._secured(frame, one) and lined_up, HOLD_STABLE):
+        # Once the ball is secured, stop travelling with it. Alignment for the
+        # pass belongs to pass_1, after the support player reaches the station.
+        if self._stable(frame, self._secured(frame, one), HOLD_STABLE):
             self._freeze(frame, one)
             self._change('wait_upper', frame.time, 'role 1 has the ball')
         return actions
@@ -213,14 +234,20 @@ class TwoPlayerPolicy:
     def _play_pass(self, frame, passer, receiver, nxt):
         station = self.upper if receiver == self.role2 else self.lower
         released = self._released(frame, passer)
+        ball_in_flight = self.kick_armed and hypot(*frame.velocity) > 280
         actions = {
             passer: self._kick_or_hold(frame, passer, frame.ours[receiver].pos, PASS_POWER, released),
-            receiver: self._receive_action(frame, receiver, station),
+            # Hold the corner until the pass is actually kicked. Otherwise the
+            # receiver heads toward the stationary ball while the passer aims.
+            receiver: (self._receive_action(frame, receiver, station)
+                       if ball_in_flight else self._go(frame, receiver, station,
+                                                       dodge=True, dribble=False)),
         }
         self._watch_holder(frame, passer, frame.ours[receiver].pos)
         if self.phase == 'fault':
             return actions
         if self._stable(frame, released, RELEASE_STABLE):
+            self._clear_carry(passer)
             self.pass_shifts.append(round(self.possession_shift, 1))
             self.passes += 1
             self.possession_shift = 0.0
@@ -253,6 +280,7 @@ class TwoPlayerPolicy:
         if self.phase == 'fault':
             return actions
         if self._stable(frame, released, RELEASE_STABLE):
+            self._clear_carry(shooter)
             self.shot_shift = round(self.possession_shift, 1)
             self.shooter_id = shooter
             self._change('shot_flight', frame.time, 'role 2 shot')
@@ -276,6 +304,22 @@ class TwoPlayerPolicy:
     def _kick_or_hold(self, frame, passer, target, power, released):
         robot = frame.ours[passer]
         aim_now = direction(frame.ball, target)
+        # Rotation can push the ball out of the dribbler. Do not keep driving
+        # toward an old hold point after that happens: reacquire from behind
+        # the ball on the current passing line.
+        if (self.kick_pose is not None and not self.kick_armed
+                and not self.holding(frame, passer) and hypot(*frame.velocity) < 280):
+            self.kick_pose = None
+            self.hold.pop(passer, None)
+            self.pass_anchor = self._anchor_point(frame.ball, target)
+        face_ball = self._face_point(robot.pos, frame.ball, robot.angle)
+        can_turn_here = (self.phase != 'shoot' or angle_error(face_ball, aim_now) < 0.55)
+        if self.kick_pose is None and self.holding(frame, passer) and can_turn_here:
+            # Passing is a stationary turn-and-kick. In particular, role 1 must
+            # not carry the ball toward role 2 after role 2 reaches the corner.
+            self.kick_pose = robot.pos
+            self.hold[passer] = robot.pos
+            self.possession_shift = 0.0
         if self.pass_anchor is None and not self.kick_armed:
             # 只算一次：站到球与目标连线的后方。之后目标点不再跟着球走。
             self.pass_anchor = self._anchor_point(frame.ball, target)
@@ -293,7 +337,8 @@ class TwoPlayerPolicy:
                 self.anchor_fixes += 1
                 self.pass_anchor = self._anchor_point(frame.ball, target)
             lined_up = distance(robot.pos, self.pass_anchor) < 70 and angle_error(robot.angle, aim_now) < 0.20
-            if not (lined_up and ball_front and robot.speed < 300):
+            if not (lined_up and ball_front and robot.speed < 300
+                    and self.holding(frame, passer)):
                 # 射门接球点常在球的侧面，直线贴上去会用车身把球碰离射门线。
                 # 传球时接球人已经在目标线上，仍直接走到球后方。
                 if self.phase == 'shoot':
@@ -311,12 +356,20 @@ class TwoPlayerPolicy:
         aligned = angle_error(robot.angle, aim_now) < 0.12
         facing = angle_error(robot.angle, self._face_point(robot.pos, frame.ball, robot.angle)) < 0.35
         settled = robot.speed < 400 and self._toward(robot.pos, anchor, target) <= SHIFT_LIMIT
-        if self._secured(frame, passer) and aligned and facing and settled:
+        ready = self._secured(frame, passer) and aligned and facing and settled
+        if self.phase == 'shoot':
+            # A stationary ball alongside the dribbler can make RushTo hunt
+            # around its hold point indefinitely. A controlled, nearly aligned
+            # shot is preferable to dragging it through another setup loop.
+            ready = (self.holding(frame, passer) and robot.speed < 500
+                     and angle_error(robot.angle, aim_now) < 0.10)
+        if ready:
             if not self.kick_armed:
                 self.kick_armed = True
                 self.kick_origin = frame.ball
                 self.kick_aim = aim_now
-            return self._rush(anchor, self.kick_aim, dodge=False, dribble=True, power=power)
+            return self._rush(anchor, self.kick_aim, dodge=False, dribble=True,
+                              power=power, kick_target=target)
         return self._rush(anchor, aim_now, dodge=False, dribble=True)
 
     def _stay(self, frame, holder, teammate_or_point):
@@ -416,6 +469,9 @@ class TwoPlayerPolicy:
     def _ball_in_penalty(self, ball):
         return ball[0] > self.penalty_front - 40 and abs(ball[1]) < self.penalty_half_width + 40
 
+    def _ball_in_own_penalty(self, ball):
+        return ball[0] < self.own_penalty_front + 40 and abs(ball[1]) < self.penalty_half_width + 40
+
     def _along_aim(self, ball, aim, station):
         return self.clamp(self._along_velocity(ball, (cos(aim) * 1000, sin(aim) * 1000), station))
 
@@ -429,8 +485,10 @@ class TwoPlayerPolicy:
     def open_goal(self, frame):
         # 门柱在 ±500。瞄准开角靠中的位置，避免贴着门柱被角度误差打出底线。
         # 守门员在中路或被下角的 1 吸引到负半区时，打上角露出的空当。
-        opening = (self.goal_width / 2 - 40) * 0.35
-        keeper = frame.enemies.get(0)
+        opening = (self.goal_width / 2 - 40) * 0.65
+        keeper = min(frame.enemies.values(),
+                     key=lambda robot: distance(robot.pos, (self.half_length, 0)),
+                     default=None)
         side = -1 if keeper is not None and keeper.y > 80 else 1
         return self.half_length, side * opening
 
@@ -495,18 +553,41 @@ class TwoPlayerPolicy:
         else:
             self.fail(reason)
 
+    def _track_carry(self, frame):
+        for n in self.IDS:
+            if self.holding(frame, n):
+                pos = frame.ours[n].pos
+                old = self.carrier_last_pos[n]
+                if old is not None:
+                    self.carried_mm[n] += distance(old, pos)
+                    self.peak_carried_mm[n] = max(self.peak_carried_mm[n],
+                                                  self.carried_mm[n])
+                self.carrier_last_pos[n] = pos
+            elif distance(frame.ours[n].pos, frame.ball) > 250:
+                self._clear_carry(n)
+
+    def _clear_carry(self, n):
+        self.carried_mm[n] = 0.0
+        self.carrier_last_pos[n] = None
+
     def _robot_inside(self, frame):
         return any(self.inside(robot.pos) for robot in frame.ours.values())
 
+    def _robot_inside_own(self, frame):
+        return any(self.inside_own(robot.pos) for robot in frame.ours.values())
+
     def inside(self, point, margin=80):
         return point[0] > self.penalty_front - margin and abs(point[1]) < self.penalty_half_width + margin
+
+    def inside_own(self, point, margin=80):
+        return point[0] < self.own_penalty_front + margin and abs(point[1]) < self.penalty_half_width + margin
 
     def clamp(self, point):
         return (min(max(point[0], -self.limit_x), self.limit_x),
                 min(max(point[1], -self.limit_y), self.limit_y))
 
-    def _rush(self, pos, angle, dodge, dribble, power=None):
-        return Action('rush', self.clamp(pos), angle, dodge, dribble, power)
+    def _rush(self, pos, angle, dodge, dribble, power=None, kick_target=None):
+        return Action('rush', self.clamp(pos), angle, dodge, dribble, power, kick_target)
 
     def _stops(self):
         return {n: Action('stop') for n in self.IDS}

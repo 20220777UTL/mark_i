@@ -5,6 +5,7 @@
 
 import Global
 from Play.Normal.ExampleNormalPlay import ExampleNormalPlay
+from Play.Normal.SimplePassPlay import SimplePassPlay
 from Play.RefPlay.ExampleKickOff import ExampleKickOff
 from Play.RefPlay.ExampleKickOffDefend import ExampleKickOffDefend
 from Play.RefPlay.ExampleFreeKick import ExampleFreeKick
@@ -15,7 +16,7 @@ from Play.RefPlay.OurTimeout import OurTimeout
 from Play.Test.Test_Goalie2022 import Test_Goalie2022
 
 
-Global.isTestMode = True
+Global.isTestMode = False
 Global.needDetailedRuntimeDebugInfo = False
 # 默认按视觉识别场上车辆，不限制人数或车号；也可填车号元组限定受控车辆。
 Global.controlledRobotNumbers = None
@@ -35,7 +36,7 @@ class GameStrategy:
 
 # key 由 GameControl/Referee.py 和 SelectPlay.py 使用；替换值时请保留 key。
 Global.gameStrategies = {
-    "NormalPlay": GameStrategy(ExampleNormalPlay()),
+    "NormalPlay": GameStrategy(SimplePassPlay()),
     "KickOff": GameStrategy(ExampleKickOff()),
     "KickOffDef": GameStrategy(ExampleKickOffDefend()),
     "FreeKick": GameStrategy(ExampleFreeKick()),
@@ -55,11 +56,12 @@ Global.gameStrategies = {
 
 testStrategy = GameStrategy(ExampleNormalPlay())
 
-# Opt-in local preliminary practice; the existing example remains the default.
+# Opt-in local practice modes; formal NormalPlay above remains the default.
 import os
 if os.environ.get("SRC_PRELIM") == "1":
     from Play.Normal.PreliminaryAttack import PreliminaryAttack, PreliminaryPracticeKeeper
     Global.controlledRobotNumbers = (0,) if Global.isYellow else (1, 2)
+    Global.isTestMode = True
     testStrategy = GameStrategy(PreliminaryAttack(), PreliminaryPracticeKeeper())
     Global.gameStrategies["NormalPlay"] = testStrategy
 
@@ -71,13 +73,14 @@ if os.environ.get("SRC_KICK_CALIBRATION") == "1":
     else:
         from Play.Test.KickCalibration import KickCalibration
     Global.controlledRobotNumbers = (1,)
+    Global.isTestMode = True
     testStrategy = GameStrategy(KickCalibration())
 
 if os.environ.get("SRC_SIMPLE_PASS") == "1":
     if not Global.isSimulation or Global.isYellow:
         raise ValueError("Simple pass practice requires blue-team simulation")
-    from Play.Normal.SimplePassPlay import SimplePassPlay
     Global.controlledRobotNumbers = (1, 2)
+    Global.isTestMode = True
     testStrategy = GameStrategy(SimplePassPlay())
 
 # 如需固定守门员车号，可在此设置并取消下面两行的注释。

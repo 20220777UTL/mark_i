@@ -32,6 +32,17 @@ def face(origin, point):
 
 
 class GateTests(unittest.TestCase):
+    def test_roles_wait_for_manually_placed_ball_to_settle(self):
+        policy = TwoPlayerPolicy()
+        moving = frame(0.0, velocity=(900, 0))
+        policy.tick(moving)
+        policy.tick(frame(1.0, velocity=(900, 0)))
+        self.assertEqual(policy.phase, 'assign')
+        self.assertIsNone(policy.role1)
+        policy.tick(frame(1.1))
+        policy.tick(frame(1.3))
+        self.assertEqual(policy.phase, 'get_ball')
+
     def test_vision_loss_stops_without_assigning_roles(self):
         policy = TwoPlayerPolicy()
         actions = policy.tick(frame(valid=False))
@@ -101,6 +112,21 @@ class GateTests(unittest.TestCase):
         self.assertEqual(policy.phase, 'fault')
         self.assertTrue(all(action.kind == 'stop' for action in actions.values()))
 
+    def test_own_penalty_entry_stops_both_attackers(self):
+        policy = TwoPlayerPolicy()
+        policy.phase = 'get_ball'
+        policy.role1, policy.role2 = 1, 2
+        policy.entered = 0.0
+        actions = policy.tick(frame(0.2, ours={1: robot(-3700, 0), 2: robot(2200, -850)}))
+        self.assertEqual(policy.phase, 'fault')
+        self.assertTrue(all(action.kind == 'stop' for action in actions.values()))
+
+    def test_ball_in_penalty_is_not_collected(self):
+        policy = TwoPlayerPolicy()
+        actions = policy.tick(frame(0.2, ball=(3800, 0)))
+        self.assertEqual(policy.phase, 'fault')
+        self.assertTrue(all(action.kind == 'stop' for action in actions.values()))
+
     def test_receive_target_stays_outside_penalty(self):
         policy = TwoPlayerPolicy()
         policy.phase = 'receive_1'
@@ -129,10 +155,48 @@ class GateTests(unittest.TestCase):
         self.assertFalse(actions[2].dribble)
         self.assertGreater(hypot(point[0] - policy.pass_anchor[0], point[1] - policy.pass_anchor[1]), 100)
 
+    def test_shoots_when_ball_is_controlled_and_nearly_aligned(self):
+        policy = TwoPlayerPolicy()
+        policy.phase = 'shoot'
+        policy.role1, policy.role2 = 1, 2
+        policy.entered = 0.0
+        policy.hold[2] = (2917, 929)
+        policy.kick_pose = (2917, 929)
+        ball = (3015, 810)
+        ours = {1: robot(3200, -1300), 2: robot(2925, 896, -0.37, infrared=True, speed=350)}
+        action = policy.tick(frame(0.2, ball=ball, ours=ours))[2]
+        self.assertEqual(action.power, SHOT_POWER)
+
     def test_open_side_is_away_from_the_keeper(self):
         policy = TwoPlayerPolicy()
         self.assertGreater(policy.open_goal(frame(enemies={0: robot(4250, -400)}))[1], 0)
         self.assertLess(policy.open_goal(frame(enemies={0: robot(4250, 400)}))[1], 0)
+
+    def test_receiver_waits_at_upper_corner_until_ball_is_kicked(self):
+        policy = TwoPlayerPolicy()
+        policy.phase = 'pass_1'
+        policy.role1, policy.role2 = 1, 2
+        policy.entered = 0.0
+        policy.hold[1] = (1500, 550)
+        ours = {1: robot(1500, 550, infrared=True),
+                2: robot(3200, 1300)}
+        actions = policy.tick(frame(0.2, ball=(1585, 550), ours=ours))
+        self.assertEqual(actions[2].pos, policy.upper)
+        self.assertFalse(actions[2].dribble)
+
+    def test_lost_ball_during_turn_retargets_behind_ball(self):
+        policy = TwoPlayerPolicy()
+        policy.phase = 'pass_2'
+        policy.role1, policy.role2 = 1, 2
+        policy.entered = 0.0
+        policy.hold[2] = (1805, 573)
+        policy.kick_pose = (1805, 573)
+        ball = (1787, 460)
+        ours = {1: robot(3200, -1300), 2: robot(1770, 565, -1.05)}
+        actions = policy.tick(frame(0.2, ball=ball, ours=ours))
+        self.assertIsNone(policy.kick_pose)
+        self.assertNotIn(2, policy.hold)
+        self.assertLess(hypot(actions[2].pos[0] - 1734, actions[2].pos[1] - 526), 10)
 
     def _armed_pass(self, armed):
         policy = TwoPlayerPolicy()
@@ -167,6 +231,7 @@ class SimulationTests(unittest.TestCase):
                 self.assertTrue(all(shift < DRIBBLE_LIMIT for shift in policy.pass_shifts))
                 self.assertLess(policy.shot_shift, DRIBBLE_LIMIT)
                 self.assertLessEqual(policy.peak_m_s, 6.0)
+                self.assertTrue(all(mm < 800 for mm in policy.peak_carried_mm.values()))
 
     def test_pass_command_stays_on_the_hold_point(self):
         seen = []
