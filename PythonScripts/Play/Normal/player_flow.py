@@ -6,15 +6,16 @@ from typing import Optional
 
 from CppPackage import CGeoPoint
 from RoleMatch_LuaStyle import State, StateMachine, Task, declare_state_machine
-from RoleMatch_LuaStyle.Skills import GetBall, RushTo, SimpleGoTo, StaticGetBall, TurnAndShoot
+from RoleMatch_LuaStyle.Skills import *
 from Vision import Ball, Player
 from WorldModel import Flags
 from WorldModel.Positions import theirGoal
+import math
 
 position_1 = CGeoPoint(2000, -1000)
 position_2 = CGeoPoint(2000, 1000)
 pass_power = 6000
-ARRIVAL_DISTANCE = 600
+ARRIVAL_DISTANCE = 150
 GET_BALL_DISTANCE = 50
 GET_BALL_ANGLE = 0.5
 goalie = 0
@@ -23,17 +24,74 @@ player2 = 2
 
 # Minimum time a status remains active. Ball actions get a longer minimum so
 # their task is sent for several decision cycles before a transition is allowed.
-MOVE_DELAY_SECONDS = 0.12
-BALL_ACTION_DELAY_SECONDS = 0.25
+MOVE_DELAY_SECONDS = 0.1
+BALL_ACTION_DELAY_SECONDS = 0.1
 
 
-def arrive_at(point: CGeoPoint, role: int):
-    return (Player.pos(role).dist(point) < ARRIVAL_DISTANCE)
+def arrive_at(point: CGeoPoint, role: int, dist: float = ARRIVAL_DISTANCE):
+    return (Player.pos(role).dist(point) < dist)
 
-
-def got_ball(role: int):
+def got_ball(role: int, dist: float = ARRIVAL_DISTANCE):
     # return (Player.pos(role).dist(Ball.pos()) < GET_BALL_DISTANCE and -GET_BALL_ANGLE < (Player.direction(role) - float(Player.toBallDir(role))) < GET_BALL_ANGLE)
-    return arrive_at(Ball.pos(), role)
+    return arrive_at(Ball.pos(), role, dist)
+
+def kick_ball_pos(ballpos: CGeoPoint, target: CGeoPoint, prep_length: float = 100):
+    """Return the kick angle and a point prep_length behind the ball."""
+    dx = target.x() - ballpos.x()
+    dy = target.y() - ballpos.y()
+    if dx == 0 and dy == 0:
+        raise ValueError("kick target must differ from ball position")
+
+    angle = math.atan2(dy, dx)
+    ret_pos = CGeoPoint(
+        ballpos.x() - math.cos(angle) * prep_length,
+        ballpos.y() - math.sin(angle) * prep_length,
+    )
+    return angle, ret_pos
+
+def good_angle(role: int, target: CGeoPoint):
+    xrole, yrole = Player.posX(role), Player.posY(role)
+    xball, yball = Ball.posX(), Ball.posY()
+    xtarget, ytarget = target.x(), target.y()
+    ball_dx, ball_dy = xball - xrole, yball - yrole
+    target_dx, target_dy = xtarget - xrole, ytarget - yrole
+    if (ball_dx == 0 and ball_dy == 0) or (target_dx == 0 and target_dy == 0):
+        return False
+
+    angle_role_ball = math.atan2(ball_dy, ball_dx)
+    angle_role_target = math.atan2(target_dy, target_dx)
+    angle_error = math.atan2(
+        math.sin(angle_role_ball - angle_role_target),
+        math.cos(angle_role_ball - angle_role_target),
+    )
+    return abs(angle_error) < GET_BALL_ANGLE
+
+def ready_to_shoot(role: int, target: CGeoPoint):
+    if not arrive_at(Ball.pos(), role):
+        return False
+    else:
+        return (
+            good_angle(role, target)
+        )
+
+def kick_moving_ball_pos(ballpos: CGeoPoint, target: CGeoPoint, prep_length: float = 150):#todo: take ball speed into consideration
+    """Return the kick angle and a point prep_length behind the moving ball."""
+    dx = target.x() - ballpos.x()
+    dy = target.y() - ballpos.y()
+    if dx == 0 and dy == 0:
+        raise ValueError("kick target must differ from ball position")
+
+    angle = math.atan2(dy, dx)
+
+    ball_vx = Ball.velX()
+    ball_vy = Ball.velY()
+
+    ret_pos = CGeoPoint(
+        ballpos.x() - math.cos(angle) * prep_length + ball_vx * 100,
+        ballpos.y() - math.sin(angle) * prep_length + ball_vy * 100,
+    )
+    return angle, ret_pos
+
 
 class FlowStatus:
     """One named status in a player's flow."""
@@ -50,145 +108,16 @@ class FlowStatus:
     def can_advance(self, state: GeneralState) -> bool:
         return False
 
+class FlowMemory:
+    """Current status plus the monotonic time it was entered."""
 
-class P1Start(FlowStatus):
-    name = "start"
+    def __init__(self, initial_status: FlowStatus):
+        self.status = initial_status
+        self.status_entered_at = time.monotonic()
 
-    def get_task(self) -> Optional[Task]:
-        # return Task(SimpleGoTo(position_1, angle=0, flag=0), fixedNumber=player1)
-        return None
-
-    def can_advance(self, state: GeneralState) -> bool:
-        return arrive_at(position_1, player1)
-
-
-class P1ReceivePass(FlowStatus):
-    name = "arrived_at_p1"
-    delay = BALL_ACTION_DELAY_SECONDS
-
-    def get_task(self) -> Optional[Task]:
-        return Task(GetBall(flag=Flags.quickly), fixedNumber=player1)
-
-    def can_advance(self, state: GeneralState) -> bool:
-        p2_status = state.player_flows[player2].memory.status
-        return p2_status.name == "shot_ball_from_start" and got_ball(player1)
-
-
-class P1PassToP2(FlowStatus):
-    name = "got_ball_at_p1"
-    delay = BALL_ACTION_DELAY_SECONDS
-
-    def get_task(self) -> Optional[Task]:
-        return Task(
-            TurnAndShoot(target=position_2, power=pass_power, flag=0),
-            fixedNumber=player1,
-        )
-
-    def can_advance(self, state: GeneralState) -> bool:
-        return not got_ball(player1)
-
-
-class P1End(FlowStatus):
-    name = "end"
-    delay = 0.0
-
-
-class P2Start(FlowStatus):
-    name = "start"
-    delay = BALL_ACTION_DELAY_SECONDS
-
-    def get_task(self) -> Optional[Task]:
-        return Task(
-            RushTo(
-                Ball.pos(),
-                angle=Player.toBallDir(player2),
-                flag=Flags.quickly,
-                needDribble=True,
-            ),
-            fixedNumber=player2,
-        )
-
-    def can_advance(self, state: GeneralState) -> bool:
-        return got_ball(player2)
-
-class P2Test(FlowStatus):
-    name = "test"
-    delay = 0
-    def get_task(self):
-        return Task(
-            SimpleGoTo(
-                CGeoPoint(-3000,2000),
-                angle=0,
-                flag=0
-            ),
-            fixedNumber=player2
-        )
-
-    def can_advance(self, state: GeneralState) -> bool:
-        return False
-
-class P2PassToP1(FlowStatus):
-    name = "found_ball"
-    delay = BALL_ACTION_DELAY_SECONDS
-
-    def get_task(self) -> Optional[Task]:
-        return Task(
-            StaticGetBall(target=position_1, kickPower=10000, chipPower=0),
-            fixedNumber=player2,
-        )
-
-    def can_advance(self, state: GeneralState) -> bool:
-        return not got_ball(player2)
-
-
-class P2MoveToPosition2(FlowStatus):
-    name = "shot_ball_from_start"
-
-    def get_task(self) -> Optional[Task]:
-        return Task(SimpleGoTo(position_2), fixedNumber=player2)
-
-    def can_advance(self, state: GeneralState) -> bool:
-        p1_status = state.player_flows[player1].memory.status
-        return p1_status.name == "end" and arrive_at(position_2, player2)
-
-
-class P2ReceiveAtPosition2(FlowStatus):
-    name = "arrived_at_p2"
-    delay = BALL_ACTION_DELAY_SECONDS
-
-    def get_task(self) -> Optional[Task]:
-        return Task(
-            RushTo(
-                Ball.pos(),
-                angle=Player.toBallDir(player2),
-                flag=Flags.quickly,
-                needDribble=True,
-            ),
-            fixedNumber=player2,
-        )
-
-    def can_advance(self, state: GeneralState) -> bool:
-        return got_ball(player2)
-
-
-class P2ShootToGoal(FlowStatus):
-    name = "got_ball_at_p2"
-    delay = BALL_ACTION_DELAY_SECONDS
-
-    def get_task(self) -> Optional[Task]:
-        return Task(
-            StaticGetBall(target=theirGoal, kickPower=16000, chipPower=300),
-            fixedNumber=player2,
-        )
-
-    def can_advance(self, state: GeneralState) -> bool:
-        return not got_ball(player2)
-
-
-class P2End(FlowStatus):
-    name = "end"
-    delay = 0.0
-
+    def enter(self, status: FlowStatus, now: float) -> None:
+        self.status = status
+        self.status_entered_at = now
 
 class PlayerFlow:
     """A reusable flow runner; each player gets its own instance and memory."""
@@ -210,56 +139,175 @@ class PlayerFlow:
         return None
 
 
-class FlowMemory:
-    """Current status plus the monotonic time it was entered."""
+class Player1Flow(PlayerFlow):
+    class P1Start(FlowStatus):
+        name = "start"
 
-    def __init__(self, initial_status: FlowStatus):
-        self.status = initial_status
-        self.status_entered_at = time.monotonic()
+        def get_task(self) -> Optional[Task]:
+            return Task(SimpleGoTo(point=kick_ball_pos(position_1, position_2)[1], angle=kick_ball_pos(position_1, position_2)[0], flag=Flags.quickly), fixedNumber=player1)
+            # return None
 
-    def enter(self, status: FlowStatus, now: float) -> None:
-        self.status = status
-        self.status_entered_at = now
+        def can_advance(self, state: GeneralState) -> bool:
+            return got_ball(player1, 400)
+
+    class P1ReceivePass(FlowStatus):
+        name = "arrived_at_p1"
+        delay = 0.05
+
+        def get_task(self) -> Optional[Task]:
+            return Task(SimpleGoTo(kick_ball_pos(Ball.pos(),position_2)[1], kick_ball_pos(Ball.pos(),position_2)[0],flag=Flags.quickly), fixedNumber=player1)
+            return None
+        
+        def can_advance(self, state: GeneralState) -> bool:
+            p2_status = state.player_flows[player2].memory.status
+            """
+            现在一个核心问题是如何在运动中传球。
+            首先，等球过来再启动的方案已经否决了。
+            """
+            return p2_status.name == "shot_ball_from_start" and ready_to_shoot(role=player1, target=position_2)
+
+    class P1PassToP2(FlowStatus):
+        name = "got_ball_at_p1"
+        delay = BALL_ACTION_DELAY_SECONDS
+
+        def get_task(self) -> Optional[Task]:
+            return Task(
+                StaticGetBall(target=position_2, kickPower=6000, chipPower=0),
+                fixedNumber=player1,
+            )
+
+        def can_advance(self, state: GeneralState) -> bool:
+            # return not got_ball(player1)
+            return False
+
+    class P1End(FlowStatus):
+        name = "end"
+        delay = 0.0
+
+    def __init__(self):
+        start = self.P1Start()
+        receive_pass = self.P1ReceivePass()
+        pass_to_p2 = self.P1PassToP2()
+        end = self.P1End()
+
+        # Explicit graph: start -> receive -> pass -> end.
+        start.next = receive_pass
+        receive_pass.next = pass_to_p2
+        pass_to_p2.next = end
+        end.next = None
+
+        super().__init__(player1, "A", [start, receive_pass, pass_to_p2, end])
+
+
+class Player2Flow(PlayerFlow):
+    class P2Start(FlowStatus):
+        name = "start"
+        delay = BALL_ACTION_DELAY_SECONDS
+
+        def get_task(self) -> Optional[Task]:
+            return Task( #todo: here we should actually make a lambda function, or the Task will be fixed once the class is declared.
+                SimpleGoTo(
+                    # Ball.pos(),
+                    point=kick_ball_pos(Ball.pos(), position_1)[1],
+                    angle=kick_ball_pos(Ball.pos(), position_1)[0],
+                    # position_1,
+                    flag=Flags.quickly,
+                ),
+                fixedNumber=player2,
+            )
+
+        def can_advance(self, state: GeneralState) -> bool:
+            return got_ball(player2) and arrive_at(position_1, player1)
+
+    class P2PassToP1(FlowStatus):
+        name = "found_ball"
+        delay = BALL_ACTION_DELAY_SECONDS
+
+        def get_task(self) -> Optional[Task]:
+            return Task(
+                TurnAndShoot(target=position_1, power=6000, flag=Flags.nothing),
+                fixedNumber=player2,
+            )
+
+        def can_advance(self, state: GeneralState) -> bool:
+            return not got_ball(player2)
+
+    class P2MoveToPosition2(FlowStatus):
+        name = "shot_ball_from_start"
+
+        def get_task(self) -> Optional[Task]:
+            return Task(SimpleGoTo(position_2), fixedNumber=player2)
+
+        def can_advance(self, state: GeneralState) -> bool:
+            p1_status = state.player_flows[player1].memory.status
+            # return p1_status.name == "end" and arrive_at(position_2, player2)
+            return False
+
+    class P2ReceiveAtPosition2(FlowStatus):
+        name = "arrived_at_p2"
+        delay = BALL_ACTION_DELAY_SECONDS
+
+        def get_task(self) -> Optional[Task]:
+            return Task(
+                RushTo(
+                    Ball.pos(),
+                    angle=Player.toBallDir(player2),
+                    flag=Flags.quickly,
+                    needDribble=True,
+                ),
+                fixedNumber=player2,
+            )
+
+        def can_advance(self, state: GeneralState) -> bool:
+            return got_ball(player2)
+
+    class P2ShootToGoal(FlowStatus):
+        name = "got_ball_at_p2"
+        delay = BALL_ACTION_DELAY_SECONDS
+
+        def get_task(self) -> Optional[Task]:
+            return Task(
+                StaticGetBall(target=theirGoal, kickPower=16000, chipPower=300),
+                fixedNumber=player2,
+            )
+
+        def can_advance(self, state: GeneralState) -> bool:
+            return not got_ball(player2)
+
+    class P2End(FlowStatus):
+        name = "end"
+        delay = 0.0
+
+    def __init__(self):
+        start = self.P2Start()
+        pass_to_p1 = self.P2PassToP1()
+        move_to_p2 = self.P2MoveToPosition2()
+        receive_at_p2 = self.P2ReceiveAtPosition2()
+        shoot_to_goal = self.P2ShootToGoal()
+        end = self.P2End()
+
+        # Explicit graph: collect/pass -> move -> receive -> shoot -> end.
+        # start.next = pass_to_p1
+        start.next = pass_to_p1
+        pass_to_p1.next = move_to_p2
+        move_to_p2.next = receive_at_p2
+        receive_at_p2.next = shoot_to_goal
+        shoot_to_goal.next = end
+        end.next = None
+
+        super().__init__(
+            player2,
+            "B",
+            [start, pass_to_p1, move_to_p2, receive_at_p2, shoot_to_goal, end],
+        )
 
 
 def make_player1_flow() -> PlayerFlow:
-    start = P1Start()
-    receive_pass = P1ReceivePass()
-    pass_to_p2 = P1PassToP2()
-    end = P1End()
-
-    # Explicit graph: start -> receive -> pass -> end.
-    start.next = receive_pass
-    receive_pass.next = pass_to_p2
-    pass_to_p2.next = end
-    end.next = None
-
-    return PlayerFlow(player1, "A", [start, receive_pass, pass_to_p2, end])
+    return Player1Flow()
 
 
 def make_player2_flow() -> PlayerFlow:
-    start = P2Start()
-    pass_to_p1 = P2PassToP1()
-    move_to_p2 = P2MoveToPosition2()
-    receive_at_p2 = P2ReceiveAtPosition2()
-    shoot_to_goal = P2ShootToGoal()
-    test = P2Test()
-    end = P2End()
-
-    # Explicit graph: collect/pass -> move -> receive -> shoot -> end.
-    # start.next = pass_to_p1
-    start.next = test
-    pass_to_p1.next = move_to_p2
-    move_to_p2.next = receive_at_p2
-    receive_at_p2.next = shoot_to_goal
-    shoot_to_goal.next = end
-    end.next = None
-
-    return PlayerFlow(
-        player2,
-        "B",
-        [start, pass_to_p1, move_to_p2, receive_at_p2, shoot_to_goal, end, test],
-    )
+    return Player2Flow()
 
 
 class GeneralState(State):

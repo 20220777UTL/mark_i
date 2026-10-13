@@ -25,7 +25,7 @@ fi
 
 cd "$PROJECT_DIR"
 if [ "$#" -eq 0 ]; then
-    set -- --team blue --side right --sim
+    set -- --team blue --side left --sim
 fi
 
 exec env WINEPREFIX="$HOME/.wine" WINEDEBUG=-all \
