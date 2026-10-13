@@ -15,7 +15,7 @@ from Play.RefPlay.GameStop import GameStop
 from Play.RefPlay.OurTimeout import OurTimeout
 from Play.Test.Test_Goalie2022 import Test_Goalie2022
 from Play.Normal.two_attack import two_attack
-from Play.Normal.zz import zz
+from Play.Normal.player_flow import zz
 
 
 Global.isTestMode = True

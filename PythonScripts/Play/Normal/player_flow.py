@@ -11,10 +11,10 @@ from Vision import Ball, Player
 from WorldModel import Flags
 from WorldModel.Positions import theirGoal
 
-position_1 = CGeoPoint(1000, -500)
-position_2 = CGeoPoint(1000, 500)
+position_1 = CGeoPoint(2000, -1000)
+position_2 = CGeoPoint(2000, 1000)
 pass_power = 6000
-ARRIVAL_DISTANCE = 200
+ARRIVAL_DISTANCE = 600
 GET_BALL_DISTANCE = 50
 GET_BALL_ANGLE = 0.5
 goalie = 0
@@ -32,8 +32,8 @@ def arrive_at(point: CGeoPoint, role: int):
 
 
 def got_ball(role: int):
-    return (Player.pos(role).dist(Ball.pos()) < GET_BALL_DISTANCE and -GET_BALL_ANGLE < (Player.direction(role) - float(Player.toBallDir(role))) < GET_BALL_ANGLE)
-
+    # return (Player.pos(role).dist(Ball.pos()) < GET_BALL_DISTANCE and -GET_BALL_ANGLE < (Player.direction(role) - float(Player.toBallDir(role))) < GET_BALL_ANGLE)
+    return arrive_at(Ball.pos(), role)
 
 class FlowStatus:
     """One named status in a player's flow."""
@@ -55,7 +55,8 @@ class P1Start(FlowStatus):
     name = "start"
 
     def get_task(self) -> Optional[Task]:
-        return Task(SimpleGoTo(position_1, angle=0, flag=0), fixedNumber=player1)
+        # return Task(SimpleGoTo(position_1, angle=0, flag=0), fixedNumber=player1)
+        return None
 
     def can_advance(self, state: GeneralState) -> bool:
         return arrive_at(position_1, player1)
@@ -110,6 +111,21 @@ class P2Start(FlowStatus):
     def can_advance(self, state: GeneralState) -> bool:
         return got_ball(player2)
 
+class P2Test(FlowStatus):
+    name = "test"
+    delay = 0
+    def get_task(self):
+        return Task(
+            SimpleGoTo(
+                CGeoPoint(-3000,2000),
+                angle=0,
+                flag=0
+            ),
+            fixedNumber=player2
+        )
+
+    def can_advance(self, state: GeneralState) -> bool:
+        return False
 
 class P2PassToP1(FlowStatus):
     name = "found_ball"
@@ -227,10 +243,12 @@ def make_player2_flow() -> PlayerFlow:
     move_to_p2 = P2MoveToPosition2()
     receive_at_p2 = P2ReceiveAtPosition2()
     shoot_to_goal = P2ShootToGoal()
+    test = P2Test()
     end = P2End()
 
     # Explicit graph: collect/pass -> move -> receive -> shoot -> end.
-    start.next = pass_to_p1
+    # start.next = pass_to_p1
+    start.next = test
     pass_to_p1.next = move_to_p2
     move_to_p2.next = receive_at_p2
     receive_at_p2.next = shoot_to_goal
@@ -240,7 +258,7 @@ def make_player2_flow() -> PlayerFlow:
     return PlayerFlow(
         player2,
         "B",
-        [start, pass_to_p1, move_to_p2, receive_at_p2, shoot_to_goal, end],
+        [start, pass_to_p1, move_to_p2, receive_at_p2, shoot_to_goal, end, test],
     )
 
 
@@ -251,7 +269,6 @@ class GeneralState(State):
             player1: make_player1_flow(),
             player2: make_player2_flow(),
         }
-
     def getTasks(self) -> dict[str, Task]:
         tasks: dict[str, Task] = {}
         for flow in self.player_flows.values():
