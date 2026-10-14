@@ -15,7 +15,7 @@ from Play.RefPlay.GameStop import GameStop
 from Play.RefPlay.OurTimeout import OurTimeout
 from Play.Test.Test_Goalie2022 import Test_Goalie2022
 from Play.Normal.two_attack import two_attack
-from Play.Normal.player_flow import zz
+from Play.Normal.GoalieOnly import GoalieOnly
 
 
 Global.isTestMode = True
@@ -56,7 +56,7 @@ Global.gameStrategies = {
     "USE_ZPASS": False,
 }
 
-testStrategy = GameStrategy(zz())
+testStrategy = GameStrategy(blueTeam=two_attack(), yellowTeam=GoalieOnly())
 
 # 如需固定守门员车号，可在此设置并取消下面两行的注释。
 # Global.goalieNumber = 0

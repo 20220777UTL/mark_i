@@ -21,8 +21,10 @@ class SweepState(State):
     def getTasks(self):
         goalie = Global.goalieNumber
         x = -Params.pitchLength / 2 + GOAL_LINE_OFFSET
+        # 目标限制在两门柱内并为机器人半径留边，避免巡逻点贴住门柱。
         half_span = max(0, Params.goalWidth / 2 - Params.playerRadius)
         target = CGeoPoint(x, self.target_side * half_span)
+        # 到达当前一侧后翻转方向，下一帧开始往另一侧巡逻。
         if Player.Pos(goalie).dist(target) < ARRIVAL_DISTANCE:
             self.target_side *= -1
             target = CGeoPoint(x, self.target_side * half_span)

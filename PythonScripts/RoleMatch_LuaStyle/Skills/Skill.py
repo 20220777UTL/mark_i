@@ -15,6 +15,7 @@ from WorldModel import Positions
 from WorldModel import taskMediator, Directions, KickMode, Precision, kickStatus, \
     ChipPower
 from WorldModel.PowerCalculator import evalPower, P, POWER_MAX as _CALC_MAX
+from .AlignedShot import TurnAndShootAligned
 
 """
 步骤：copy之前的定义，然后从CppPackage.pyi中复制函数签名（除了返回值签名），把第一个参数executor去掉，剩下的参数保持不变。

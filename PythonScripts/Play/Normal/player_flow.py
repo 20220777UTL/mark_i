@@ -29,16 +29,19 @@ BALL_ACTION_DELAY_SECONDS = 0.1
 
 
 def arrive_at(point: CGeoPoint, role: int, dist: float = ARRIVAL_DISTANCE):
+    # 统一用机器人中心到目标点的距离判断到位，dist 可为不同阶段单独放宽。
     return (Player.pos(role).dist(point) < dist)
 
 def got_ball(role: int, dist: float = ARRIVAL_DISTANCE):
     # return (Player.pos(role).dist(Ball.pos()) < GET_BALL_DISTANCE and -GET_BALL_ANGLE < (Player.direction(role) - float(Player.toBallDir(role))) < GET_BALL_ANGLE)
+    # 当前示例把“拿到球”近似为机器人进入球附近；朝向检测留作更严格的替代条件。
     return arrive_at(Ball.pos(), role, dist)
 
 def kick_ball_pos(ballpos: CGeoPoint, target: CGeoPoint, prep_length: float = 100):
     """Return the kick angle and a point prep_length behind the ball."""
     dx = target.x() - ballpos.x()
     dy = target.y() - ballpos.y()
+    # 球与目标重合时没有可定义的踢球方向，尽早报错，避免生成无效站位。
     if dx == 0 and dy == 0:
         raise ValueError("kick target must differ from ball position")
 
@@ -55,6 +58,7 @@ def good_angle(role: int, target: CGeoPoint):
     xtarget, ytarget = target.x(), target.y()
     ball_dx, ball_dy = xball - xrole, yball - yrole
     target_dx, target_dy = xtarget - xrole, ytarget - yrole
+    # 机器人正好与球或目标重合时，方向角无定义，不能判定为准备好。
     if (ball_dx == 0 and ball_dy == 0) or (target_dx == 0 and target_dy == 0):
         return False
 
@@ -67,6 +71,7 @@ def good_angle(role: int, target: CGeoPoint):
     return abs(angle_error) < GET_BALL_ANGLE
 
 def ready_to_shoot(role: int, target: CGeoPoint):
+    # 先确认进入球附近，再检查从机器人看球和传球目标是否大致处于同一方向。
     if not arrive_at(Ball.pos(), role):
         return False
     else:
@@ -78,6 +83,7 @@ def kick_moving_ball_pos(ballpos: CGeoPoint, target: CGeoPoint, prep_length: flo
     """Return the kick angle and a point prep_length behind the moving ball."""
     dx = target.x() - ballpos.x()
     dy = target.y() - ballpos.y()
+    # 同样拒绝无方向的目标，避免后续速度补偿基于无效角度。
     if dx == 0 and dy == 0:
         raise ValueError("kick target must differ from ball position")
 
@@ -130,11 +136,13 @@ class PlayerFlow:
 
     def next_status_if_ready(self, state: GeneralState, now: float) -> Optional[FlowStatus]:
         current = self.memory.status
+        # 末状态没有后继；其他状态也必须先满足最短驻留时间，避免每帧重复触发。
         if current.next is None:
             return None
         if now - self.memory.status_entered_at < current.delay:
             return None
         if current.can_advance(state):
+            # 条件只负责确认当前阶段已完成，具体后继由状态图中的 next 指定。
             return current.next
         return None
 
@@ -164,6 +172,7 @@ class Player1Flow(PlayerFlow):
             现在一个核心问题是如何在运动中传球。
             首先，等球过来再启动的方案已经否决了。
             """
+            # 只有队员 2 已进入接应跑位阶段，且队员 1 到球、球与目标相对位置满足传球几何条件，才允许传球。
             return p2_status.name == "shot_ball_from_start" and ready_to_shoot(role=player1, target=position_2)
 
     class P1PassToP2(FlowStatus):
@@ -177,6 +186,7 @@ class Player1Flow(PlayerFlow):
             )
 
         def can_advance(self, state: GeneralState) -> bool:
+            # 队员 1 的传球阶段暂不自动结束，保留手动/后续策略接管空间。
             # return not got_ball(player1)
             return False
 
@@ -217,6 +227,7 @@ class Player2Flow(PlayerFlow):
             )
 
         def can_advance(self, state: GeneralState) -> bool:
+            # 双条件都满足才启动传球：队员 2 控球，队员 1 已抵达接球位置。
             return got_ball(player2) and arrive_at(position_1, player1)
 
     class P2PassToP1(FlowStatus):
@@ -230,6 +241,7 @@ class Player2Flow(PlayerFlow):
             )
 
         def can_advance(self, state: GeneralState) -> bool:
+            # 球离开队员 2 的控制范围后，认为传球动作已发出并进入跑位阶段。
             return not got_ball(player2)
 
     class P2MoveToPosition2(FlowStatus):
@@ -241,6 +253,7 @@ class Player2Flow(PlayerFlow):
         def can_advance(self, state: GeneralState) -> bool:
             p1_status = state.player_flows[player1].memory.status
             # return p1_status.name == "end" and arrive_at(position_2, player2)
+            # 该阶段当前刻意不自动结束，避免接球流程尚未准备好就继续推进。
             return False
 
     class P2ReceiveAtPosition2(FlowStatus):
@@ -259,6 +272,7 @@ class Player2Flow(PlayerFlow):
             )
 
         def can_advance(self, state: GeneralState) -> bool:
+            # 机器人重新进入球附近后，才切换到射门任务。
             return got_ball(player2)
 
     class P2ShootToGoal(FlowStatus):
@@ -272,6 +286,7 @@ class Player2Flow(PlayerFlow):
             )
 
         def can_advance(self, state: GeneralState) -> bool:
+            # 球离开控制范围表示射门动作已发出，随后进入结束状态。
             return not got_ball(player2)
 
     class P2End(FlowStatus):
@@ -321,6 +336,7 @@ class GeneralState(State):
         tasks: dict[str, Task] = {}
         for flow in self.player_flows.values():
             task = flow.memory.status.get_task()
+            # 无任务的状态不写入映射，避免覆盖其他角色或下发空任务。
             if task is not None:
                 tasks[flow.role_name] = task
         return tasks
@@ -336,6 +352,7 @@ class GeneralState(State):
         # Evaluate both flows against the same frame, then commit transitions.
         for flow in self.player_flows.values():
             next_status = flow.next_status_if_ready(self, now)
+            # 先收集本帧所有可转移项，再统一提交，避免一个队员的更新影响另一个队员本帧的判断。
             if next_status is not None:
                 transitions.append((flow, next_status))
 
