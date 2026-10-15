@@ -63,6 +63,12 @@ if os.environ.get("SRC_CORNER_PASS_TEST") == "1":
     Global.controlledRobotNumbers = (PASSER, RECEIVER)
     testStrategy = GameStrategy(Test_CornerPassShot())
 
+if os.environ.get("SRC_GIVE_AND_GO_TEST") == "1":
+    from Play.Test.Test_GiveAndGo import Test_GiveAndGo, ROBOT_IDS
+    Global.isTestMode = True
+    Global.controlledRobotNumbers = ROBOT_IDS
+    testStrategy = GameStrategy(Test_GiveAndGo())
+
 # 如需固定守门员车号，可在此设置并取消下面两行的注释。
 # Global.goalieNumber = 0
 # Global.defaultRoleNumberStructTable["G"] = Global.RoleNumberStruct(
