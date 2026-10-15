@@ -66,8 +66,11 @@ if os.environ.get("SRC_CORNER_PASS_TEST") == "1":
 if os.environ.get("SRC_GIVE_AND_GO_TEST") == "1":
     from Play.Test.Test_GiveAndGo import Test_GiveAndGo, ROBOT_IDS
     Global.isTestMode = True
-    Global.controlledRobotNumbers = ROBOT_IDS
-    testStrategy = GameStrategy(Test_GiveAndGo())
+    Global.controlledRobotNumbers = (Global.goalieNumber,) if Global.isYellow else ROBOT_IDS
+    testStrategy = GameStrategy(Test_GiveAndGo(), Test_Goalie2022())
+    team = "YELLOW" if Global.isYellow else "BLUE"
+    play = "Test_Goalie2022" if Global.isYellow else "Test_GiveAndGo"
+    print(f"[src-test] {team}: {play}; robots={Global.controlledRobotNumbers}", flush=True)
 
 # 如需固定守门员车号，可在此设置并取消下面两行的注释。
 # Global.goalieNumber = 0

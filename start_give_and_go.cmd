@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 set "SRC_CORNER_PASS_TEST="
 set "SRC_GIVE_AND_GO_TEST=1"
-for %%F in (Client.exe Medusa.exe MedusaCore.dll PythonScripts\Config.py PythonScripts\Play\Test\Test_GiveAndGo.py PythonScripts\Play\Test\Test_CornerPassShot.py PythonScripts\WorldModel\PowerCalculator.py PythonScripts\WorldModel\Flags.py PythonScripts\RoleMatch_LuaStyle\Skills\Skill.py PythonScripts\CppPackage\CppPackage.pyd data\power_curve\active_curve.json) do (
+for %%F in (Client.exe Medusa.exe MedusaCore.dll PythonScripts\Config.py PythonScripts\Play\Test\Test_GiveAndGo.py PythonScripts\Play\Test\Test_Goalie2022.py PythonScripts\Play\Test\Test_CornerPassShot.py PythonScripts\WorldModel\PowerCalculator.py PythonScripts\WorldModel\Flags.py PythonScripts\RoleMatch_LuaStyle\Skills\Skill.py PythonScripts\CppPackage\CppPackage.pyd data\power_curve\active_curve.json) do (
   if not exist "%%F" (
     echo ERROR: Missing %%F
     echo Use the complete repository and preserve your working Windows runtime.
@@ -29,9 +29,13 @@ if not errorlevel 1 (
   pause
   exit /b 1
 )
-echo Start Simulator, connect, then start BLUE Medusa in this Client.
-echo Use default stationary ball and blue robots 1 and 2. Do not start another strategy.
-echo This is a single trial. Restart BLUE Medusa to retry after resetting the scene.
+echo Start Simulator and connect. Use the default stationary ball.
+echo BLUE: robots 1 and 2 attack right. YELLOW: goalie 0 defends right.
+echo Set opposing team sides and a running referee state: FORCE_START.
+echo Start YELLOW Medusa first; wait for its YELLOW Test_Goalie2022 startup log.
+echo Then start BLUE Medusa; its log must say BLUE Test_GiveAndGo.
+echo This is a single trial. Stop both strategies and reset the scene before retrying.
+echo Native Windows execution has not been verified on this computer.
 Client.exe
 if errorlevel 1 pause
 endlocal
