@@ -28,6 +28,9 @@ KICK_ANGLE_TOLERANCE = math.radians(8)
 KICK_WINDOW_SECONDS = .18
 PASS_ANGLE_TOLERANCE = math.radians(5)
 TRAVEL_ACCELERATION = 2000
+# 首传在实际球口附近才启动短触发窗口，避免提前停车在球外。
+OPENING_CONTACT_MARGIN = 2
+OPENING_SIDE_TOLERANCE = 15
 # 规则上限1m；留100mm余量。按可见车身累计路程保守终止，不替代实车判罚。
 CARRY_STOP_DISTANCE = 900
 CLEAR_BALL_SEPARATION = 250
@@ -128,16 +131,28 @@ class GiveAndGo(CornerPassShot):
         angle = direction(self.pass_origin, self.pass_target)
         robot, ball = Player.Pos(self.near), Ball.pos()
         moved = distance(ball, self.pass_origin)
-        if self.pass_sent and (moved > 30 or math.hypot(Ball.velX(), Ball.velY()) > 150):
+        speed = math.hypot(Ball.velX(), Ball.velY())
+        if self.pass_sent and (moved > 30 or speed > 150):
             self.opening_closed = True
-        if self.opening_kick_at is not None and time.monotonic() - self.opening_kick_at >= KICK_WINDOW_SECONDS:
+        if (not self.opening_closed and self.opening_kick_at is not None
+                and time.monotonic() - self.opening_kick_at >= KICK_WINDOW_SECONDS):
             self.opening_closed = True
+            print(f"[give-and-go] OPENING_CLOSED: contact request window expired; "
+                  f"ball_distance={distance(robot, ball):.1f} moved={moved:.1f} "
+                  f"ball_speed={speed:.1f}; no retry", flush=True)
         if self.opening_closed:
+            self.status(opening_closed=True, ball_distance=distance(robot, ball),
+                        ball_moved=moved, ball_speed=speed)
             return Skill.Stop()  # 关闭后即使球弹回，也不重新触发。
         receiver_ready = self.at_position(self.far, corner, self.corner_angle)
-        heading_ok = angle_error(Player.direction(self.near), angle) < PASS_ANGLE_TOLERANCE
+        heading = Player.direction(self.near)
+        heading_ok = angle_error(heading, angle) < PASS_ANGLE_TOLERANCE
+        dx, dy = ball.x() - robot.x(), ball.y() - robot.y()
+        forward = dx * math.cos(heading) + dy * math.sin(heading)
+        lateral = -dx * math.sin(heading) + dy * math.cos(heading)
         self.status(receiver_ready=receiver_ready, heading_ok=heading_ok,
-                    ball_distance=distance(robot, ball), kick_requested=self.pass_sent)
+                    ball_distance=distance(robot, ball), front=forward, side=lateral,
+                    ball_speed=speed, kick_requested=self.pass_sent)
         if moved > 30:
             self.opening_closed = True
             return Skill.Stop()
@@ -155,8 +170,10 @@ class GiveAndGo(CornerPassShot):
         if not math.isfinite(power) or power <= 0:
             self.change_phase("DONE", "invalid opening power")
             return Skill.Stop()
-        at_mouth = (distance(robot, ball) < 150
-                    and angle_error(Player.direction(self.near), direction(robot, ball)) < .2)
+        # 旧150mm门槛比名义球口98mm早52mm；0.18秒窗口会在慢接近时提前用完。
+        at_mouth = (Params.playerFrontToCenter - 5 <= forward
+                    <= Params.playerFrontToCenter + 22 + OPENING_CONTACT_MARGIN
+                    and abs(lateral) <= OPENING_SIDE_TOLERANCE)
 
         def run(number):
             result = move(number)
@@ -165,7 +182,8 @@ class GiveAndGo(CornerPassShot):
                 self.pass_sent = True
                 if self.opening_kick_at is None:
                     self.opening_kick_at = time.monotonic()
-                    print(f"[give-and-go] OPENING_KICK robot={number} power={power:.0f}; dribble OFF", flush=True)
+                    print(f"[give-and-go] OPENING_KICK robot={number} power={power:.0f} "
+                          f"front={forward:.1f} side={lateral:.1f}; dribble OFF", flush=True)
             return result
 
         return run, match_position

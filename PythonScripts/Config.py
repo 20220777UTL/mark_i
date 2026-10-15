@@ -14,7 +14,6 @@ from Play.RefPlay.GameHalt import GameHalt
 from Play.RefPlay.GameStop import GameStop
 from Play.RefPlay.OurTimeout import OurTimeout
 from Play.Test.Test_Goalie2022 import Test_Goalie2022
-from Play.Normal.two_attack import two_attack
 
 
 Global.isTestMode = True
@@ -55,14 +54,6 @@ Global.gameStrategies = {
     "USE_ZPASS": False,
 }
 
-testStrategy = GameStrategy(two_attack())
-
-if os.environ.get("SRC_CORNER_PASS_TEST") == "1":
-    from Play.Test.Test_CornerPassShot import Test_CornerPassShot, PASSER, RECEIVER
-    Global.isTestMode = True
-    Global.controlledRobotNumbers = (PASSER, RECEIVER)
-    testStrategy = GameStrategy(Test_CornerPassShot())
-
 if os.environ.get("SRC_GIVE_AND_GO_TEST") == "1":
     from Play.Test.Test_GiveAndGo import Test_GiveAndGo, ROBOT_IDS
     Global.isTestMode = True
@@ -71,6 +62,14 @@ if os.environ.get("SRC_GIVE_AND_GO_TEST") == "1":
     team = "YELLOW" if Global.isYellow else "BLUE"
     play = "Test_Goalie2022" if Global.isYellow else "Test_GiveAndGo"
     print(f"[src-test] {team}: {play}; robots={Global.controlledRobotNumbers}", flush=True)
+elif os.environ.get("SRC_CORNER_PASS_TEST") == "1":
+    from Play.Test.Test_CornerPassShot import Test_CornerPassShot, PASSER, RECEIVER
+    Global.controlledRobotNumbers = (PASSER, RECEIVER)
+    testStrategy = GameStrategy(Test_CornerPassShot())
+else:
+    # 原始比赛包不含本仓库的默认策略；显式测试模式不依赖它。
+    from Play.Normal.two_attack import two_attack
+    testStrategy = GameStrategy(two_attack())
 
 # 如需固定守门员车号，可在此设置并取消下面两行的注释。
 # Global.goalieNumber = 0

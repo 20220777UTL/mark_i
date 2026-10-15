@@ -126,7 +126,7 @@ class FrameworkTests(unittest.TestCase):
         self.frame(101)
         self.frame(101.3)
         self.assertEqual(self.state.phase, 'PASS_OUT')
-        self.positions[1] = Point(-110 * math.cos(angle), -110 * math.sin(angle))
+        self.positions[1] = Point(-98 * math.cos(angle), -98 * math.sin(angle))
         self.frame(101.4)
         self.assertTrue(self.state.pass_sent)
         self.assertGreater(self.kicks.setKick.call_args.args[1], 0)

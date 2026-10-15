@@ -137,7 +137,7 @@ class GiveAndGoTests(unittest.TestCase):
                     self.positions[2] = Point(-100, 0)
                 self.prepare_first_pass()
                 angle = self.module.direction(self.state.pass_origin, self.state.pass_target)
-                self.positions[self.state.near] = Point(-110 * math.cos(angle), -110 * math.sin(angle))
+                self.positions[self.state.near] = Point(-98 * math.cos(angle), -98 * math.sin(angle))
                 with patch.object(self.module.time, "monotonic", return_value=102):
                     self.execute(self.frame(102))
                 self.kicks.setKick.assert_called_once()
@@ -277,7 +277,7 @@ class GiveAndGoTests(unittest.TestCase):
     def test_opening_stops_after_ball_moves_without_second_kick(self):
         self.prepare_first_pass()
         angle = self.module.direction(self.state.pass_origin, self.state.pass_target)
-        self.positions[self.state.near] = Point(-110 * math.cos(angle), -110 * math.sin(angle))
+        self.positions[self.state.near] = Point(-98 * math.cos(angle), -98 * math.sin(angle))
         with patch.object(self.module.time, "monotonic", return_value=102):
             self.execute(self.frame(102))
         self.ball.pos = lambda: Point(40 * math.cos(angle), 40 * math.sin(angle))
@@ -316,7 +316,7 @@ class GiveAndGoTests(unittest.TestCase):
     def test_opening_rebound_cannot_rearm_kick(self):
         self.prepare_first_pass()
         angle = self.module.direction(self.state.pass_origin, self.state.pass_target)
-        self.positions[self.state.near] = Point(-110 * math.cos(angle), -110 * math.sin(angle))
+        self.positions[self.state.near] = Point(-98 * math.cos(angle), -98 * math.sin(angle))
         with patch.object(self.module.time, "monotonic", return_value=102):
             self.execute(self.frame(102))
         self.ball.pos = lambda: Point(40 * math.cos(angle), 40 * math.sin(angle))
@@ -382,6 +382,58 @@ class GiveAndGoTests(unittest.TestCase):
         self.state.reset()
         self.assertFalse(self.state.opening_closed)
         self.assertIsNone(self.state.opening_kick_at)
+
+    def test_native_replay_gap_does_not_expire_kick_before_contact(self):
+        self.prepare_first_pass()
+        # 本轮回放：球仍在(0,0)，车先后距球约149mm、133mm，尚未到球口。
+        # 时间取一个超过旧0.18s窗口的慢接近情形，不冒充回放中的原始时间戳。
+        samples = [(102, -129.95135498046875, 72.50067901611328, -0.5727083683013916),
+                   (102.3, -115.26274108886717, 65.86621856689453, -0.48427820205688477)]
+        for now, x, y, heading in samples:
+            self.positions[1], self.angles[1] = Point(x, y), heading
+            with patch.object(self.module.time, "monotonic", return_value=now):
+                tasks = self.frame(now)
+                self.execute(tasks)
+            self.assertNotEqual(getattr(tasks["A"].skill[0], "kind", None), "stop")
+            destination = self.skills.SimpleGoTo.call_args_list[-2].args[0]
+            self.assertAlmostEqual(math.hypot(destination.x(), destination.y()), 96)
+            self.assertFalse(self.state.opening_closed)
+            self.assertIsNone(self.state.opening_kick_at)
+            self.kicks.setKick.assert_not_called()
+        angle = self.module.direction(self.state.pass_origin, self.state.pass_target)
+        self.positions[1] = Point(-98 * math.cos(angle), -98 * math.sin(angle))
+        self.angles[1] = angle
+        with patch.object(self.module.time, "monotonic", return_value=102.6):
+            self.execute(self.frame(102.6))
+        self.assertEqual(self.state.opening_kick_at, 102.6)
+        self.kicks.setKick.assert_called_once()
+        self.assertTrue(all(call.args[1] == 0 for call in self.cpp.setDribbleCommand.call_args_list
+                            if call.args[0] == 1))
+
+    def test_opening_waits_for_front_contact_without_infrared(self):
+        self.prepare_first_pass()
+        angle = self.module.direction(self.state.pass_origin, self.state.pass_target)
+        self.positions[1] = Point(-120 * math.cos(angle), -120 * math.sin(angle))
+        self.infrared[1] = False
+        with patch.object(self.module.time, "monotonic", return_value=102):
+            self.execute(self.frame(102))
+        self.kicks.setKick.assert_not_called()
+        self.positions[1] = Point(-98 * math.cos(angle), -98 * math.sin(angle))
+        with patch.object(self.module.time, "monotonic", return_value=102.4):
+            self.execute(self.frame(102.4))
+        self.kicks.setKick.assert_called_once()
+        self.assertEqual(self.state.opening_kick_at, 102.4)
+
+    def test_opening_does_not_trigger_for_ball_beside_or_behind_robot(self):
+        self.prepare_first_pass()
+        angle = self.module.direction(self.state.pass_origin, self.state.pass_target)
+        for forward, side in ((98, 18), (-98, 0)):
+            self.positions[1] = Point(-forward * math.cos(angle) + side * math.sin(angle),
+                                      -forward * math.sin(angle) - side * math.cos(angle))
+            with patch.object(self.module.time, "monotonic", return_value=102):
+                self.execute(self.frame(102))
+            self.kicks.setKick.assert_not_called()
+            self.assertIsNone(self.state.opening_kick_at)
 
     def test_return_pass_expiry_never_retries_even_with_valid_possession(self):
         self.frame(100)

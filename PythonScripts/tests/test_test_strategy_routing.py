@@ -20,7 +20,7 @@ PLAYS = {
 
 
 class RoutingTests(unittest.TestCase):
-    def load_config(self, yellow, environment):
+    def load_config(self, yellow, environment, default_available=True):
         state = NS(isYellow=yellow, goalieNumber=0)
         modules = {"Global": state}
         for folder, names in PLAYS.items():
@@ -28,6 +28,8 @@ class RoutingTests(unittest.TestCase):
                 constructor = Mock(return_value=NS(name=name, planTasks=Mock()))
                 modules[f"Play.{folder}.{name}"] = NS(**{name: constructor},
                                                        ROBOT_IDS=(1, 2), PASSER=1, RECEIVER=2)
+        if not default_available:
+            modules["Play.Normal.two_attack"] = None
         spec = importlib.util.spec_from_file_location("routing_test_config", ROOT / "Config.py")
         config = importlib.util.module_from_spec(spec)
         output = io.StringIO()
@@ -61,6 +63,13 @@ class RoutingTests(unittest.TestCase):
                 self.assertIsNone(state.controlledRobotNumbers)
                 self.assertEqual(config.testStrategy.blueTeam.name, "two_attack")
                 self.assertIs(config.testStrategy.blueTeam, config.testStrategy.yellowTeam)
+
+    def test_explicit_tests_work_without_repo_only_default_strategy(self):
+        for yellow in (False, True):
+            for flag in ("SRC_GIVE_AND_GO_TEST", "SRC_CORNER_PASS_TEST"):
+                with self.subTest(yellow=yellow, flag=flag):
+                    config, _, _ = self.load_config(yellow, {flag: "1"}, default_available=False)
+                    config.testStrategy.runStrategy()
 
     def test_legacy_corner_entry_is_unchanged(self):
         config, state, _ = self.load_config(False, {"SRC_CORNER_PASS_TEST": "1"})
