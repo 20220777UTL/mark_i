@@ -1,4 +1,4 @@
-"""默认摆球 → 近车控球 → 底角接应 → 回传接射。仅仿真，单轮运行。"""
+"""球后对准一脚开球 → 底角接应 → 回传接射。单轮实验，需实车标定。"""
 import math
 import time
 
@@ -18,7 +18,7 @@ from Play.Test.Test_CornerPassShot import (
 ROBOT_IDS = (PASSER, RECEIVER)
 LIMITS = {"SETUP": 35, "PASS_OUT": 8, "RETURN_SETUP": 18,
           "RETURN_PASS": 8, "FINISH": 6}
-# 最后一脚的实验参数，单位 mm、秒、弧度；前两次传球仍允许吸球。
+# 最后一脚的实验参数，单位 mm、秒、弧度；只有底角接第一脚球允许吸球。
 MEET_RADIUS = 300
 MEET_LEAD_TIME = .06
 MIN_INCOMING_SPEED = 150
@@ -49,6 +49,10 @@ class GiveAndGo(CornerPassShot):
         self.corner_angle = 0
         self.shot_requested_at = None
         self.frozen_finish = None
+        self.last_possession = {}
+        self.vision_lost_since = None
+        self.last_status_at = -math.inf
+        self.opening_kick_at = None
 
     def tasks_for(self, near_skill, far_skill):
         return {"A": Task(near_skill, fixedNumber=self.near),
@@ -65,8 +69,92 @@ class GiveAndGo(CornerPassShot):
 
     def has_ball(self, number):
         robot, ball = Player.Pos(number), Ball.pos()
-        return (distance(robot, ball) < 160 and Player.isInfraredOn(number)
-                and angle_error(Player.direction(number), direction(robot, ball)) < .35)
+        geometry_ok = (distance(robot, ball) < 160
+                       and angle_error(Player.direction(number), direction(robot, ball)) < .35)
+        if not geometry_ok:
+            self.last_possession.pop(number, None)
+            return False
+        now = time.monotonic()
+        if Player.isInfraredOn(number):
+            self.last_possession[number] = now
+            return True
+        # 仅在几何关系仍正确且球较慢时，容忍已确认持球后的短暂红外掉线。
+        return (now - self.last_possession.get(number, -math.inf) < .12
+                and math.hypot(Ball.velX(), Ball.velY()) < 300)
+
+    def status(self, **values):
+        if time.monotonic() - self.last_status_at >= 1:
+            self.last_status_at = time.monotonic()
+            print(f"[give-and-go] WAIT {self.phase} " + " ".join(
+                f"{key}={value:.2f}" if isinstance(value, float) else f"{key}={value}"
+                for key, value in values.items()), flush=True)
+
+    def travel(self, number, target, angle, avoid_ball=True):
+        """直线路径受球或队友阻挡时插入绕行点；不是完整的全场路径规划器。"""
+        start = Player.Pos(number)
+        dx, dy = target.x() - start.x(), target.y() - start.y()
+        length = math.hypot(dx, dy)
+        if length < 1:
+            return self.move(target, angle)
+        other = self.far if number == self.near else self.near
+        obstacles = [(Player.Pos(other), 240)]
+        if avoid_ball:
+            obstacles.append((Ball.pos(), 160))
+        for obstacle, clearance in obstacles:
+            projection = ((obstacle.x() - start.x()) * dx + (obstacle.y() - start.y()) * dy) / length**2
+            if not 0 < projection < 1:
+                continue
+            foot = CGeoPoint(start.x() + projection * dx, start.y() + projection * dy)
+            if distance(obstacle, foot) >= clearance:
+                continue
+            px, py = -dy / length, dx / length
+            sign = 1 if (start.x() - obstacle.x()) * px + (start.y() - obstacle.y()) * py >= 0 else -1
+            detour = CGeoPoint(obstacle.x() + sign * px * (clearance + 100),
+                              obstacle.y() + sign * py * (clearance + 100))
+            if (abs(detour.x()) < Params.pitchLength / 2 - 150
+                    and abs(detour.y()) < Params.pitchWidth / 2 - 150
+                    and not (detour.x() > Params.pitchLength / 2 - Params.penaltyDepth - 110
+                             and abs(detour.y()) < Params.penaltyWidth / 2 + 110)):
+                return self.move(detour, angle)
+            return Skill.Stop()
+        return self.move(target, angle)
+
+    def opening_skill(self, corner):
+        """固定球后接近并预触发一次开球；不吸球，不追着移动的球继续接触。"""
+        angle = direction(self.pass_origin, self.pass_target)
+        robot, ball = Player.Pos(self.near), Ball.pos()
+        moved = distance(ball, self.pass_origin)
+        if self.pass_sent and (moved > 30 or math.hypot(Ball.velX(), Ball.velY()) > 150):
+            return Skill.Stop()
+        if self.opening_kick_at is not None and time.monotonic() - self.opening_kick_at > .18:
+            return Skill.Stop()  # 等待离球/超时，不自动再次尝试开球。
+        receiver_ready = self.at_position(self.far, corner, self.corner_angle)
+        heading_ok = angle_error(Player.direction(self.near), angle) < math.radians(5)
+        self.status(receiver_ready=receiver_ready, heading_ok=heading_ok,
+                    ball_distance=distance(robot, ball), kick_requested=self.pass_sent)
+        if not receiver_ready or not heading_ok or moved > 30:
+            return Skill.Stop()
+        destination = CGeoPoint(self.pass_origin.x() - 96 * math.cos(angle),
+                                self.pass_origin.y() - 96 * math.sin(angle))
+        move, match_position = self.move(destination, angle, dribble=False)
+        power = evalPower(self.pass_origin, self.pass_target, P.NORMAL)
+        if not math.isfinite(power) or power <= 0:
+            self.change_phase("DONE", "invalid opening power")
+            return Skill.Stop()
+        at_mouth = (distance(robot, ball) < 150
+                    and angle_error(Player.direction(self.near), direction(robot, ball)) < .2)
+
+        def run(number):
+            result = move(number)
+            if at_mouth:
+                kickStatus.setKick(number, power)
+                self.pass_sent = True
+                if self.opening_kick_at is None:
+                    self.opening_kick_at = time.monotonic()
+                    print(f"[give-and-go] OPENING_KICK robot={number} power={power:.0f}; dribble OFF", flush=True)
+            return result
+
+        return run, match_position
 
     def move(self, target, angle, dribble=False):
         execute, match_position = Skill.SimpleGoTo(target, angle=angle)
@@ -104,6 +192,14 @@ class GiveAndGo(CornerPassShot):
                  and angle_error(Player.direction(passer), direction(Player.Pos(passer), target))
                  < math.radians(5)
                  and self.at_position(receiver, receiver_pos, receiver_angle))
+        self.status(has_ball=self.has_ball(passer), infrared=Player.isInfraredOn(passer),
+                    ball_distance=distance(Player.Pos(passer), Ball.pos()),
+                    ball_angle_deg=math.degrees(angle_error(Player.direction(passer), direction(Player.Pos(passer), Ball.pos()))),
+                    pass_angle_deg=math.degrees(angle_error(Player.direction(passer), direction(Player.Pos(passer), target))),
+                    passer_speed=Player.velMod(passer),
+                    receiver_distance=distance(Player.Pos(receiver), receiver_pos),
+                    receiver_angle_deg=math.degrees(angle_error(Player.direction(receiver), receiver_angle)),
+                    receiver_speed=Player.velMod(receiver))
         if not ready:
             self.ready_since = None
         elif self.ready_since is None:
@@ -225,12 +321,23 @@ class GiveAndGo(CornerPassShot):
         if self.phase == "DONE":
             return self.stop_tasks()
         if not self.vision_ok():
+            self.ready_since = None
+            self.last_possession.clear()
             if self.assigned:
-                return self.done("vision lost; restart trial after restoring vision")
+                if self.vision_lost_since is None:
+                    self.vision_lost_since = time.monotonic()
+                self.status(vision="invalid; stopped without using stale ball position")
+                if self.phase == "FINISH" or time.monotonic() - self.vision_lost_since > .5:
+                    return self.done("vision lost; restart trial after restoring vision")
+                return self.stop_tasks()
             if self.vision_status != "waiting":
                 print(f"[give-and-go] waiting for ball and robots {ROBOT_IDS}", flush=True)
                 self.vision_status = "waiting"
             return self.stop_tasks()
+
+        if self.vision_lost_since is not None:
+            self.started += time.monotonic() - self.vision_lost_since
+            self.vision_lost_since = None
 
         ball = Ball.pos()
         if abs(ball.x()) > Params.pitchLength / 2 or abs(ball.y()) > Params.pitchWidth / 2:
@@ -259,9 +366,24 @@ class GiveAndGo(CornerPassShot):
         if self.phase == "SETUP":
             self.corner_angle = direction(corner, ball)
             target = mouth(corner, self.corner_angle)
-            near_skill = self.collect(self.near, target)
-            far_skill = self.move(corner, self.corner_angle, dribble=True)
-            if self.ready_to_pass(self.near, self.far, corner, self.corner_angle, target):
+            angle = direction(ball, target)
+            behind = CGeoPoint(ball.x() - 260 * math.cos(angle), ball.y() - 260 * math.sin(angle))
+            near_skill = self.travel(self.near, behind, angle)
+            far_skill = self.travel(self.far, corner, self.corner_angle)
+            ready = (self.at_position(self.near, behind, angle)
+                     and self.at_position(self.far, corner, self.corner_angle)
+                     and math.hypot(Ball.velX(), Ball.velY()) < 100)
+            self.status(behind_distance=distance(Player.Pos(self.near), behind),
+                        near_angle_deg=math.degrees(angle_error(Player.direction(self.near), angle)),
+                        far_distance=distance(Player.Pos(self.far), corner),
+                        far_angle_deg=math.degrees(angle_error(Player.direction(self.far), self.corner_angle)),
+                        near_speed=Player.velMod(self.near), far_speed=Player.velMod(self.far),
+                        ball_speed=math.hypot(Ball.velX(), Ball.velY()))
+            if not ready:
+                self.ready_since = None
+            elif self.ready_since is None:
+                self.ready_since = time.monotonic()
+            elif time.monotonic() - self.ready_since >= .25:
                 self.begin_pass("PASS_OUT", target)
             return self.tasks_for(near_skill, far_skill)
 
@@ -269,7 +391,7 @@ class GiveAndGo(CornerPassShot):
             if self.departed():
                 self.change_phase("RETURN_SETUP", "first pass departed; near robot runs to shot point")
             else:
-                near_skill = self.pass_skill(self.near, self.far, corner, self.corner_angle)
+                near_skill = self.opening_skill(corner)
                 if self.phase == "DONE":
                     return self.stop_tasks()
                 return self.tasks_for(near_skill, self.move(corner, self.corner_angle, dribble=True))
@@ -281,7 +403,7 @@ class GiveAndGo(CornerPassShot):
             else:
                 far_skill = self.move(corner, direction(corner, ball), dribble=True)
                 self.ready_since = None
-            near_skill = self.move(shot, 0)
+            near_skill = self.travel(self.near, shot, 0)
             if self.ready_to_pass(self.far, self.near, shot, 0, shot_mouth):
                 self.begin_pass("RETURN_PASS", shot_mouth)
             return self.tasks_for(near_skill, far_skill)
