@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 set "SRC_CORNER_PASS_TEST="
 set "SRC_GIVE_AND_GO_TEST=1"
-for %%F in (Client.exe Medusa.exe MedusaCore.dll PythonScripts\Config.py PythonScripts\Play\Test\Test_GiveAndGo.py PythonScripts\Play\Test\Test_CornerPassShot.py PythonScripts\WorldModel\PowerCalculator.py PythonScripts\CppPackage\CppPackage.pyd data\power_curve\active_curve.json) do (
+for %%F in (Client.exe Medusa.exe MedusaCore.dll PythonScripts\Config.py PythonScripts\Play\Test\Test_GiveAndGo.py PythonScripts\Play\Test\Test_CornerPassShot.py PythonScripts\WorldModel\PowerCalculator.py PythonScripts\WorldModel\Flags.py PythonScripts\RoleMatch_LuaStyle\Skills\Skill.py PythonScripts\CppPackage\CppPackage.pyd data\power_curve\active_curve.json) do (
   if not exist "%%F" (
     echo ERROR: Missing %%F
     echo Use the complete repository and preserve your working Windows runtime.
@@ -14,6 +14,12 @@ for %%F in (Client.exe Medusa.exe MedusaCore.dll PythonScripts\Config.py PythonS
 findstr /C:"SRC_GIVE_AND_GO_TEST" PythonScripts\Config.py >nul
 if errorlevel 1 (
   echo ERROR: Config.py has no full-flow test entry. Update the test branch.
+  pause
+  exit /b 1
+)
+findstr /C:"def SmartGoTo(" PythonScripts\RoleMatch_LuaStyle\Skills\Skill.py >nul
+if errorlevel 1 (
+  echo ERROR: SmartGoTo wrapper is missing. Update the complete test branch.
   pause
   exit /b 1
 )

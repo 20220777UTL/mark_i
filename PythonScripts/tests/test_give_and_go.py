@@ -31,6 +31,10 @@ class GiveAndGoTests(unittest.TestCase):
         self.skills.SimpleGoTo.side_effect = lambda *a, **k: skill("move", *a, **k)
         self.skills.Stop.side_effect = lambda: skill("stop")
         self.skills.StaticGetBall.side_effect = lambda *a: skill("shot", *a)
+        self.skills.SmartGoTo = Mock(side_effect=lambda *a, **k: skill("planned_move", *a, **k))
+        flags_spec = importlib.util.spec_from_file_location("real_flags_test", Path(__file__).resolve().parents[1] / "WorldModel/Flags.py")
+        self.flags = importlib.util.module_from_spec(flags_spec)
+        flags_spec.loader.exec_module(self.flags)
         modules = {
             "CppPackage": self.cpp, "Global": NS(isPlaySwitched=False),
             "Geometry": NS(CGeoPoint=Point),
@@ -39,7 +43,7 @@ class GiveAndGoTests(unittest.TestCase):
                                      declare_state_machine=lambda *a: lambda cls: cls),
             "RoleMatch_LuaStyle.Skills": NS(Skill=self.skills),
             "Vision": NS(Ball=self.ball, Player=self.player),
-            "WorldModel": NS(Params=self.params, kickStatus=self.kicks),
+            "WorldModel": NS(Params=self.params, kickStatus=self.kicks, Flags=self.flags),
             "WorldModel.PowerCalculator": NS(evalPower=self.power, P=NS(NORMAL=1, HIGH=2)),
             "Play.Test.Test_CornerPassShot": base_module,
         }
@@ -154,7 +158,8 @@ class GiveAndGoTests(unittest.TestCase):
                 self.frame(104)
                 self.frame(104.3)
                 self.assertEqual(self.state.phase, "RETURN_PASS")
-                self.execute(self.frame(104.4))
+                with patch.object(self.module.time, "monotonic", return_value=104.4):
+                    self.execute(self.frame(104.4))
                 self.assertEqual(self.kicks.setKick.call_count, 2)
                 tasks = self.advance_pass(104.6)
                 self.assertEqual(self.state.phase, "FINISH")
@@ -281,11 +286,145 @@ class GiveAndGoTests(unittest.TestCase):
         self.execute(tasks)
         self.kicks.setKick.assert_called_once()
 
-    def test_travel_inserts_waypoint_when_ball_blocks_route(self):
+    def test_travel_requests_native_avoidance_and_conservative_acceleration(self):
         self.positions[1], self.positions[2] = Point(-500, 0), Point(-1000, 1000)
         self.state.travel(1, Point(500, 0), 0)
-        target = self.skills.SimpleGoTo.call_args.args[0]
-        self.assertGreater(abs(target.y()), 160)
+        call = self.skills.SmartGoTo.call_args
+        self.assertEqual(call.kwargs["maxAcc"], 2000)
+        self.assertEqual(call.kwargs["flag"], self.flags.dodge_ball | self.flags.allow_dss | self.flags.slowly)
+        self.skills.SimpleGoTo.assert_not_called()
+
+    def test_six_degree_heading_keeps_setup_correcting_instead_of_deadlocking(self):
+        self.frame(100)
+        corner = Point(3900, -2400)
+        angle = self.module.direction(Point(0, 0), corner)
+        self.positions[1] = Point(-260 * math.cos(angle), -260 * math.sin(angle))
+        self.positions[2], self.angles[2] = corner, angle + math.pi
+        self.angles[1] = angle + math.radians(6)
+        self.frame(101)
+        self.frame(101.3)
+        self.assertEqual(self.state.phase, "SETUP")
+
+    def test_valid_frame_after_long_vision_gap_still_aborts(self):
+        self.frame(100)
+        self.ball.valid = lambda: False
+        self.frame(101)
+        self.ball.valid = lambda: True
+        self.assert_stopped(self.frame(102))
+        self.assertEqual(self.state.phase, "DONE")
+
+    def test_opening_rebound_cannot_rearm_kick(self):
+        self.prepare_first_pass()
+        angle = self.module.direction(self.state.pass_origin, self.state.pass_target)
+        self.positions[self.state.near] = Point(-110 * math.cos(angle), -110 * math.sin(angle))
+        with patch.object(self.module.time, "monotonic", return_value=102):
+            self.execute(self.frame(102))
+        self.ball.pos = lambda: Point(40 * math.cos(angle), 40 * math.sin(angle))
+        self.execute(self.frame(102.02))
+        self.ball.pos = lambda: Point(0, 0)
+        with patch.object(self.module.time, "monotonic", return_value=102.04):
+            self.execute(self.frame(102.04))
+        self.kicks.setKick.assert_called_once()
+
+    def test_finish_checks_actual_mouth_before_nominal_line(self):
+        self.prepare_finish(Point(3220, 0), (-1000, 0))
+        self.positions[self.state.near] = Point(3080, 0)  # 合法等待误差内，实际球口仍在来球前方。
+        with patch.object(self.module.time, "monotonic", return_value=101):
+            self.execute(self.frame(101))
+        self.kicks.setKick.assert_called_once_with(self.state.near, 4000)
+
+    def test_return_pass_keeps_request_briefly_until_ball_moves(self):
+        self.frame(100)
+        self.positions[1], self.positions[2] = Point(3150, 0), Point(3900, -2400)
+        target = self.module.mouth(self.positions[1], 0)
+        self.angles[2] = self.module.direction(self.positions[2], target)
+        origin = self.module.mouth(self.positions[2], self.angles[2])
+        self.ball.pos, self.infrared[2] = lambda: origin, True
+        with patch.object(self.module.time, "monotonic", return_value=101):
+            self.state.begin_pass("RETURN_PASS", target)
+            self.execute(self.frame(101))
+        with patch.object(self.module.time, "monotonic", return_value=101.05):
+            self.execute(self.frame(101.05))
+        self.assertEqual(self.kicks.setKick.call_count, 2)
+        self.ball.pos = lambda: Point(origin.x() - 40, origin.y())
+        self.execute(self.frame(101.06))
+        self.ball.pos = lambda: origin
+        with patch.object(self.module.time, "monotonic", return_value=101.08):
+            self.execute(self.frame(101.08))
+        self.assertEqual(self.kicks.setKick.call_count, 2)
+
+    def test_close_ball_route_does_not_use_unsafe_single_waypoint(self):
+        # 旧路径 (200,0)->(0,-260) 距球最近仅158.52mm，小于自身声明的160mm。
+        self.positions[1], self.positions[2] = Point(200, 0), Point(-1000, 1000)
+        self.state.travel(1, Point(-260, 0), 0)
+        self.skills.SimpleGoTo.assert_not_called()
+        self.skills.SmartGoTo.assert_called_once()
+        self.assertTrue(self.skills.SmartGoTo.call_args.kwargs["flag"] & self.flags.dodge_ball)
+
+    def test_opening_corrects_heading_outside_ball_contact(self):
+        self.prepare_first_pass()
+        expected_angle = self.angles[self.state.near]
+        self.angles[self.state.near] += math.radians(6)
+        self.skills.SimpleGoTo.reset_mock()
+        self.execute(self.frame(102))
+        move = self.skills.SimpleGoTo.call_args_list[0]
+        self.assertAlmostEqual(move.args[0].x(), self.positions[self.state.near].x())
+        self.assertAlmostEqual(move.kwargs["angle"], expected_angle)
+        self.kicks.setKick.assert_not_called()
+
+    def test_opening_expiry_is_latched_and_reset_clears_it(self):
+        self.prepare_first_pass()
+        self.state.pass_sent = True
+        self.state.opening_kick_at = 101
+        self.execute(self.frame(101.2))
+        self.assertTrue(self.state.opening_closed)
+        self.kicks.setKick.assert_not_called()
+        self.state.reset()
+        self.assertFalse(self.state.opening_closed)
+        self.assertIsNone(self.state.opening_kick_at)
+
+    def test_return_pass_expiry_never_retries_even_with_valid_possession(self):
+        self.frame(100)
+        self.positions[1], self.positions[2] = Point(3150, 0), Point(3900, -2400)
+        target = self.module.mouth(self.positions[1], 0)
+        self.angles[2] = self.module.direction(self.positions[2], target)
+        ball = self.module.mouth(self.positions[2], self.angles[2])
+        self.ball.pos, self.infrared[2] = lambda: ball, True
+        with patch.object(self.module.time, "monotonic", return_value=101):
+            self.state.begin_pass("RETURN_PASS", target)
+            self.execute(self.frame(101))
+        self.execute(self.frame(101.2))
+        self.execute(self.frame(101.3))
+        self.assertTrue(self.state.return_closed)
+        self.kicks.setKick.assert_called_once()
+
+    def test_return_pass_has_its_own_fresh_trigger_window(self):
+        self.frame(100)
+        self.state.return_closed = True  # 第一脚曾短暂丢失视觉，不能污染之后的第二脚。
+        self.state.return_kick_at = 100
+        with patch.object(self.module.time, "monotonic", return_value=101):
+            self.state.begin_pass("RETURN_PASS", Point(3248, 0))
+        self.assertFalse(self.state.return_closed)
+        self.assertIsNone(self.state.return_kick_at)
+
+    def test_vision_loss_during_opening_disarms_until_restart(self):
+        self.prepare_first_pass()
+        self.state.pass_sent, self.state.opening_kick_at = True, 101.31
+        self.ball.valid = lambda: False
+        self.assert_stopped(self.frame(101.32))
+        self.ball.valid = lambda: True
+        self.execute(self.frame(101.36))
+        self.assertTrue(self.state.opening_closed)
+        self.kicks.setKick.assert_not_called()
+
+    def test_unsafe_destination_and_out_of_field_robot_stop(self):
+        self.skills.SmartGoTo.reset_mock()
+        for target in (Point(4490, 0), Point(3600, 0), Point(0, 2990)):
+            self.assertEqual(self.state.travel(1, target, 0)[0].kind, "stop")
+        self.skills.SmartGoTo.assert_not_called()
+        self.positions[1] = Point(-4600, 0)
+        self.assert_stopped(self.frame(100))
+        self.assertEqual(self.state.phase, "DONE")
 
     def test_timeout_latches_stop_and_reset_clears_roles(self):
         self.frame()
