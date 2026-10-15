@@ -470,7 +470,7 @@ class PassBack(AttackState):
         if self.target is None:
             self.target = point(self.control.return_contact)
         return {'A': move_to(mainshoot, point(centre), self.control, angle, flags=Flags.allow_dss | Flags.dodge_ball),
-                'B': kick_to(assistant, self.target, self, allow_kick=return_ready(self.control))}
+                'B': kick_to(assistant, self.target, self, allow_kick=return_ready(self.control), level=P.NORMAL)}
 
     def transFunction(self):
         # 接应者完成回传后，主攻手切换为预判拦截和射门。
