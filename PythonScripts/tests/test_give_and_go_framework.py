@@ -107,6 +107,10 @@ class FrameworkTests(unittest.TestCase):
         # 力度入口及曲线后端执行仓库原代码；仅原生坐标/控制/视觉被替换。
         root = Path(__file__).resolve().parents[1]
         self.cpp.DebugEngine = NS(Instance=lambda: self.global_state.debugEngine)
+        global_tree = ast.parse((root / 'Global.py').read_text())
+        self.global_state.powerMax = next(ast.literal_eval(node.value) for node in global_tree.body
+                                         if isinstance(node, ast.Assign)
+                                         and any(isinstance(t, ast.Name) and t.id == 'powerMax' for t in node.targets))
         spec = importlib.util.spec_from_file_location("real_power_test", root / "WorldModel/PowerCalculator.py")
         power = importlib.util.module_from_spec(spec)
         with patch.dict('sys.modules', {'Global': self.global_state, 'CppPackage': self.cpp,

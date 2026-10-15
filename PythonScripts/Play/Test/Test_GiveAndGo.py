@@ -28,6 +28,9 @@ KICK_ANGLE_TOLERANCE = math.radians(8)
 KICK_WINDOW_SECONDS = .18
 PASS_ANGLE_TOLERANCE = math.radians(5)
 TRAVEL_ACCELERATION = 2000
+# 规则上限1m；留100mm余量。按可见车身累计路程保守终止，不替代实车判罚。
+CARRY_STOP_DISTANCE = 900
+CLEAR_BALL_SEPARATION = 250
 
 
 def copy_point(point):
@@ -58,6 +61,8 @@ class GiveAndGo(CornerPassShot):
         self.opening_closed = False
         self.return_kick_at = None
         self.return_closed = False
+        self.carry_last = None
+        self.carry_distance = 0
 
     def tasks_for(self, near_skill, far_skill):
         return {"A": Task(near_skill, fixedNumber=self.near),
@@ -93,6 +98,18 @@ class GiveAndGo(CornerPassShot):
             print(f"[give-and-go] WAIT {self.phase} " + " ".join(
                 f"{key}={value:.2f}" if isinstance(value, float) else f"{key}={value}"
                 for key, value in values.items()), flush=True)
+
+    def carry_limit_reached(self):
+        robot = Player.Pos(self.far)
+        if distance(robot, Ball.pos()) > CLEAR_BALL_SEPARATION:
+            self.carry_last, self.carry_distance = None, 0
+        elif self.carry_last is not None:
+            self.carry_distance += distance(robot, self.carry_last)
+            self.carry_last = copy_point(robot)
+        elif self.has_ball(self.far):
+            self.carry_last = copy_point(robot)
+        # 红外掉线不清计数；只有观察到明显人球分离才重新计数。
+        return self.carry_distance >= CARRY_STOP_DISTANCE
 
     def travel(self, number, target, angle):
         # 单个手写绕行点不能保证整段路径安全；使用已有原生规划与动态避障。
@@ -287,6 +304,9 @@ class GiveAndGo(CornerPassShot):
                     and abs(lateral) <= KICK_SIDE_TOLERANCE and approaching
                     and angle_error(heading, direction(ball, goal)) <= KICK_ANGLE_TOLERANCE)
 
+        if self.shot_requested_at is not None and not can_kick:
+            return self.done("ball left shot contact window; no rebound or second attempt")
+
         if self.frozen_finish is not None:
             destination, aim = self.frozen_finish
         elif can_kick:
@@ -369,6 +389,10 @@ class GiveAndGo(CornerPassShot):
             if (pos.x() > Params.pitchLength / 2 - Params.penaltyDepth - 110
                     and abs(pos.y()) < Params.penaltyWidth / 2 + 110):
                 return self.done(f"robot {n} at opponent penalty area boundary")
+            if (pos.x() < -Params.pitchLength / 2 + Params.penaltyDepth + 110
+                    and abs(pos.y()) < Params.penaltyWidth / 2 + 110
+                    and distance(pos, ball) < 160):
+                return self.done(f"non-goalkeeper {n} near ball at own penalty area boundary")
 
         corner = CGeoPoint(Params.pitchLength / 2 - 600, -Params.pitchWidth / 2 + 600)
         shot = CGeoPoint(Params.pitchLength / 2 - Params.penaltyDepth - 350, 0)
@@ -384,6 +408,8 @@ class GiveAndGo(CornerPassShot):
                               f"shot=({shot.x():.0f},{shot.y():.0f})")
         if time.monotonic() - self.started > LIMITS[self.phase]:
             return self.done(f"{self.phase} timeout")
+        if self.phase in ("RETURN_SETUP", "RETURN_PASS") and self.carry_limit_reached():
+            return self.done("continuous carry reached 900mm guard; release/reset trial")
 
         if self.phase == "SETUP":
             self.corner_angle = direction(corner, ball)
