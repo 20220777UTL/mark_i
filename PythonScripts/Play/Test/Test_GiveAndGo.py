@@ -18,6 +18,14 @@ from Play.Test.Test_CornerPassShot import (
 ROBOT_IDS = (PASSER, RECEIVER)
 LIMITS = {"SETUP": 35, "PASS_OUT": 8, "RETURN_SETUP": 18,
           "RETURN_PASS": 8, "FINISH": 6}
+# 最后一脚的实验参数，单位 mm、秒、弧度；前两次传球仍允许吸球。
+MEET_RADIUS = 300
+MEET_LEAD_TIME = .06
+MIN_INCOMING_SPEED = 150
+KICK_SIDE_TOLERANCE = 40
+KICK_FRONT_MARGIN = 55
+KICK_ANGLE_TOLERANCE = math.radians(8)
+KICK_WINDOW_SECONDS = .18
 
 
 def copy_point(point):
@@ -39,6 +47,8 @@ class GiveAndGo(CornerPassShot):
         self.pass_target = None
         self.pass_sent = False
         self.corner_angle = 0
+        self.shot_requested_at = None
+        self.frozen_finish = None
 
     def tasks_for(self, near_skill, far_skill):
         return {"A": Task(near_skill, fixedNumber=self.near),
@@ -136,6 +146,78 @@ class GiveAndGo(CornerPassShot):
 
         return run, match_position
 
+    def finish_tasks(self, shot, goal):
+        """小范围迎球，球口窗口内预触发平射；没有吸球或失接后的取球分支。"""
+        ball, robot = Ball.pos(), Player.Pos(self.near)
+        vx, vy = Ball.velX(), Ball.velY()
+        speed = math.hypot(vx, vy)
+        now = time.monotonic()
+        if distance(robot, shot) > MEET_RADIUS + 80:
+            return self.done("shooter left reception area; no chase")
+        if self.shot_requested_at is not None:
+            if (distance(ball, robot) > 300 and vx > 500
+                    and angle_error(math.atan2(vy, vx), direction(robot, goal)) < .4):
+                return self.done("outgoing ball after kick request; not proof of a goal")
+            if now - self.shot_requested_at >= KICK_WINDOW_SECONDS:
+                return self.done("kick window closed; no recapture or second attempt")
+
+        nominal_mouth = mouth(shot, 0)
+        if ball.x() < nominal_mouth.x() - 140:
+            return self.done("ball passed reception line; no chase")
+        if speed < MIN_INCOMING_SPEED:
+            return self.done("incoming ball too slow/stopped; no collection")
+
+        if self.frozen_finish is not None:
+            destination, aim = self.frozen_finish
+        else:
+            if vx >= -50:
+                return self.done("ball no longer approaching reception line")
+            time_to_line = (nominal_mouth.x() - ball.x()) / vx
+            if time_to_line < 0:
+                return self.done("missed reception line; no retry")
+            # shortcut: 短时直线速度预测，每帧重算；不声称已标定摩擦和碰撞补偿。
+            meet_time = max(0, time_to_line - MEET_LEAD_TIME)
+            contact = CGeoPoint(ball.x() + vx * meet_time, ball.y() + vy * meet_time)
+            aim = direction(contact, goal)
+            offset = Params.playerFrontToCenter + 22
+            destination = CGeoPoint(contact.x() - offset * math.cos(aim),
+                                    contact.y() - offset * math.sin(aim))
+            if distance(destination, shot) > MEET_RADIUS:
+                return self.done("predicted contact outside reception area; no chase")
+            if (destination.x() > Params.pitchLength / 2 - Params.penaltyDepth - 110
+                    and abs(destination.y()) < Params.penaltyWidth / 2 + 110):
+                return self.done("predicted contact too close to penalty area")
+
+        # 踢球判定用实际车身朝向和球相对球口的位置，不用红外持球信号。
+        heading = Player.direction(self.near)
+        dx, dy = ball.x() - robot.x(), ball.y() - robot.y()
+        forward = dx * math.cos(heading) + dy * math.sin(heading)
+        lateral = -dx * math.sin(heading) + dy * math.cos(heading)
+        actual_mouth = mouth(robot, heading)
+        approaching = vx * (actual_mouth.x() - ball.x()) + vy * (actual_mouth.y() - ball.y()) > 0
+        can_kick = (Params.playerFrontToCenter - 5 <= forward
+                    <= Params.playerFrontToCenter + 22 + KICK_FRONT_MARGIN
+                    and abs(lateral) <= KICK_SIDE_TOLERANCE and approaching
+                    and angle_error(heading, aim) <= KICK_ANGLE_TOLERANCE)
+        power = evalPower(ball, goal, P.HIGH)
+        if not math.isfinite(power) or power <= 0:
+            return self.done("invalid shot power")
+        move, match_position = self.move(destination, aim, dribble=False)
+
+        def run(number):
+            result = move(number)
+            if can_kick:
+                kickStatus.setKick(number, power)
+                if self.shot_requested_at is None:
+                    self.shot_requested_at = time.monotonic()
+                    # 开始出脚后锁住位置/朝向，短窗口补发同一脚请求，不转身补救。
+                    self.frozen_finish = (copy_point(robot), heading)
+                    print(f"[give-and-go] DIRECT_KICK robot={number} "
+                          f"front={forward:.1f} side={lateral:.1f} power={power:.0f}", flush=True)
+            return result
+
+        return self.tasks_for((run, match_position), Skill.Stop())
+
     def getTasks(self):
         kickStatus.clearAll()
         for number in ROBOT_IDS:
@@ -206,26 +288,14 @@ class GiveAndGo(CornerPassShot):
 
         if self.phase == "RETURN_PASS":
             if self.departed():
-                self.change_phase("FINISH", "return pass departed; StaticGetBall starts before contact")
+                self.change_phase("FINISH", "return pass departed; bounded meet + direct kick, dribble OFF")
             else:
                 far_skill = self.pass_skill(self.far, self.near, shot, 0)
                 if self.phase == "DONE":
                     return self.stop_tasks()
                 return self.tasks_for(self.move(shot, 0), far_skill)
 
-        # shortcut: 最后一脚的移动和踢球时机由现有原生技能决定，仍需仿真验证。
-        if self.near_since is None and distance(ball, Player.Pos(self.near)) < 220:
-            self.near_since = time.monotonic()
-            print("[give-and-go] ball near shooter", flush=True)
-        if (self.near_since is not None and distance(ball, Player.Pos(self.near)) > 300
-                and Ball.velX() > 500
-                and angle_error(math.atan2(Ball.velY(), Ball.velX()),
-                                direction(Player.Pos(self.near), goal)) < .4):
-            return self.done("possible shot; inspect recording, not a success assertion")
-        power = evalPower(ball, goal, P.HIGH)
-        if not math.isfinite(power) or power <= 0:
-            return self.done("invalid shot power")
-        return self.tasks_for(Skill.StaticGetBall(goal, power, 0), Skill.Stop())
+        return self.finish_tasks(shot, goal)
 
 
 @declare_state_machine(GiveAndGo)

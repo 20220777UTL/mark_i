@@ -158,10 +158,80 @@ class GiveAndGoTests(unittest.TestCase):
                 self.assertEqual(self.kicks.setKick.call_count, 2)
                 tasks = self.advance_pass(104.6)
                 self.assertEqual(self.state.phase, "FINISH")
-                self.assertEqual(tasks["A"].skill[0].kind, "shot")
+                self.execute(tasks)
+                self.skills.StaticGetBall.assert_not_called()
+                self.assertEqual(self.kicks.setKick.call_count, 2)
                 self.assertEqual(tasks["A"].num, near)
                 self.assertEqual(tasks["B"].skill[0].kind, "stop")
                 self.assertFalse(self.infrared[near])
+
+    def prepare_finish(self, ball=Point(3300, -150), velocity=(-500, 1500)):
+        self.frame(100)
+        self.positions[self.state.near] = Point(3150, 0)
+        self.angles[self.state.near] = 0
+        self.state.phase, self.state.started = "FINISH", 100
+        self.ball.pos = lambda: ball
+        self.ball.velX, self.ball.velY = lambda: velocity[0], lambda: velocity[1]
+        # FINISH 不允许回到红外确认/持球流程。
+        self.player.isInfraredOn = Mock(side_effect=AssertionError("finish queried possession"))
+
+    def test_finish_meets_ball_in_bounded_area_without_dribble_or_composite_skill(self):
+        self.prepare_finish()
+        self.skills.SimpleGoTo.reset_mock()
+        self.cpp.setDribbleCommand.reset_mock()
+        tasks = self.frame(101)
+        self.execute(tasks)
+        destination = self.skills.SimpleGoTo.call_args.args[0]
+        self.assertLessEqual(self.module.distance(destination, Point(3150, 0)), self.module.MEET_RADIUS)
+        self.assertLess(destination.y(), 0)  # 在球到达前向底角来球方向迎球。
+        self.assertTrue(all(call.args[1] == 0 for call in self.cpp.setDribbleCommand.call_args_list))
+        self.skills.StaticGetBall.assert_not_called()
+        self.kicks.setKick.assert_not_called()
+
+    def test_finish_kicks_in_mouth_window_without_possession(self):
+        self.prepare_finish(Point(3270, 0), (-1000, 0))
+        with patch.object(self.module.time, "monotonic", return_value=101):
+            self.execute(self.frame(101))
+        self.kicks.setKick.assert_called_once_with(self.state.near, 4000)
+        self.assertEqual(self.state.shot_requested_at, 101)
+        self.assertEqual(self.state.frozen_finish[0].x(), 3150)
+        self.player.isInfraredOn.assert_not_called()
+        self.assert_stopped(self.frame(101.2))
+        self.assertEqual(self.state.phase, "DONE")
+        self.assert_stopped(self.frame(102))
+
+    def test_finish_rejects_stopped_wrong_way_and_missed_balls(self):
+        cases = [(Point(3300, 0), (0, 0)),
+                 (Point(3300, 0), (1000, 0)),
+                 (Point(3200, 0), (-1000, 0)),
+                 (Point(3400, 800), (-1000, 0))]
+        for ball, velocity in cases:
+            with self.subTest(ball=(ball.x(), ball.y()), velocity=velocity):
+                self.setUp()
+                self.prepare_finish(ball, velocity)
+                self.assert_stopped(self.frame(101))
+                self.assertEqual(self.state.phase, "DONE")
+                self.kicks.setKick.assert_not_called()
+                self.skills.StaticGetBall.assert_not_called()
+
+    def test_finish_does_not_kick_sideways_or_when_heading_is_wrong(self):
+        for ball, heading in [(Point(3270, 80), 0), (Point(3270, 0), .5)]:
+            with self.subTest(heading=heading):
+                self.setUp()
+                self.prepare_finish(ball, (-1000, 0))
+                self.angles[self.state.near] = heading
+                self.execute(self.frame(101))
+                self.kicks.setKick.assert_not_called()
+
+    def test_finish_stops_after_outgoing_ball_and_reset_clears_kick_latch(self):
+        self.prepare_finish(Point(3270, 0), (-1000, 0))
+        with patch.object(self.module.time, "monotonic", return_value=101):
+            self.execute(self.frame(101))
+        self.ball.pos, self.ball.velX = lambda: Point(3500, 0), lambda: 2500
+        self.assert_stopped(self.frame(101.1))
+        self.state.reset()
+        self.assertIsNone(self.state.shot_requested_at)
+        self.assertIsNone(self.state.frozen_finish)
 
     def test_missing_vision_waits_before_assignment_but_stops_active_trial(self):
         self.ball.valid = lambda: False
