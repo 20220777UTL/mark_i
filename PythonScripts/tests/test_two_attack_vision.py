@@ -1,210 +1,181 @@
-"""Check the strategy's vision gate without loading or commanding the C++ runtime."""
-import importlib.util
-import io
-import os
+"""Invalid frames and hardware/simulation possession must gate every state."""
 import math
-from contextlib import redirect_stdout
-from pathlib import Path
-from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from pathlib import Path
+from unittest.mock import mock_open, patch
+from two_attack_fixture import Harness, Point
+from Play.Normal import AttackParams as A
+from Play.Normal.AttackFeedback import chip_feedback, load_calibration
 
 
-class Point:
-    def __init__(self, x, y):
-        self._x, self._y = x, y
+class VisionTests(unittest.TestCase):
+    def test_simulation_never_calls_infrared_even_with_telemetry(self):
+        h = Harness()
+        h.player.isInfraredOn.side_effect = AssertionError('not available in simulation')
+        with patch.object(Path, 'open', mock_open()):
+            h.c.telemetry = 'trace.jsonl'
+            h.settle()
+        self.assertTrue(h.c.held[0])
+        for method in (h.player.isInfraredOn, h.player.infraredCount, h.player.infraredOffCount):
+            method.assert_not_called()
 
-    def x(self):
-        return self._x
+    def test_real_requires_ir_and_uses_elapsed_time(self):
+        for dt in (.01, .025):
+            h = Harness(False)
+            for _ in range(20): h.update(dt)
+            self.assertFalse(h.c.held[0])
+            h.ir[0] = True
+            h.update(dt)
+            self.assertFalse(h.c.held[0])
+            for _ in range(math.ceil(A.POSSESSION_SECONDS / dt) + 1): h.update(dt)
+            self.assertTrue(h.c.held[0])
+            h.ir[0] = False
+            h.update(dt)
+            self.assertFalse(h.c.held[0])
 
-    def y(self):
-        return self._y
+    def test_real_ir_does_not_require_the_old_narrow_window(self):
+        h = Harness(False)
+        h.ball = Point(125, 20)
+        h.ir[0] = True
+        h.settle()
+        self.assertTrue(h.c.held[0])
 
+    def test_ir_chatter_and_sensor_failure_do_not_fall_back_to_vision(self):
+        h = Harness(False)
+        for _ in range(4):
+            h.ir[0] = True
+            h.update(.02)
+            h.ir[0] = False
+            h.update(.02)
+        self.assertFalse(h.c.held[0])
+        h.player.isInfraredOn.side_effect = RuntimeError('no radio')
+        h.update()
+        self.assertFalse(h.c.valid)
+        h.run(h.state('FirstPass'))
+        h.cpp.makeItRushTo.assert_not_called()
+        h.kicks.setKick.assert_not_called()
 
-class VisionGateTests(unittest.TestCase):
-    def setUp(self):
-        self.ball = SimpleNamespace(valid=Mock(return_value=True),
-                                    pos=Mock(return_value=Point(1800, 550)))
-        self.player = SimpleNamespace(
-            isValid=Mock(return_value=True), Pos=Mock(return_value=Point(1500, 550)),
-            direction=Mock(return_value=0.0), toBallDir=Mock(return_value=0.5),
-            isInfraredOn=Mock(return_value=False))
-        self.executors = {kind: Mock(name=kind) for kind in ("stop", "kick", "move")}
-        self.skill = SimpleNamespace(
-            Stop=Mock(return_value=(self.executors["stop"], Mock())),
-            GoAndTurnKick=Mock(return_value=(self.executors["kick"], Mock())),
-            RushTo=Mock(return_value=(self.executors["move"], Mock())),
-            SimpleGoTo=Mock(return_value=(self.executors["move"], Mock())))
-        self.cpp = SimpleNamespace(setDribbleCommand=Mock())
-        self.kick_status = SimpleNamespace(clearAll=Mock(), setKick=Mock())
-        self.power = Mock(return_value=6000)
-        modules = {
-            "CppPackage": self.cpp,
-            "RoleMatch_LuaStyle": SimpleNamespace(
-                State=object, StateMachine=object,
-                Task=lambda skill, fixedNumber: SimpleNamespace(skill=skill, number=fixedNumber),
-                declare_state_machine=lambda *states: lambda cls: cls),
-            "RoleMatch_LuaStyle.Skills": SimpleNamespace(Skill=self.skill),
-            "Geometry": SimpleNamespace(CGeoPoint=Point, CVector=object),
-            "Vision": SimpleNamespace(Ball=self.ball, Player=self.player, Enemy=object),
-            "WorldModel": SimpleNamespace(
-                Positions=object, kickStatus=self.kick_status,
-                Params=SimpleNamespace(pitchLength=9000, pitchWidth=6000,
-                                       penaltyDepth=1000, playerFrontToCenter=76)),
-            "WorldModel.PowerCalculator": SimpleNamespace(evalPower=self.power,
-                                                           P=SimpleNamespace(NORMAL=1)),
-        }
-        path = Path(__file__).resolve().parents[1] / "Play/Normal/two_attack.py"
-        spec = importlib.util.spec_from_file_location("two_attack_under_test", path)
-        module = importlib.util.module_from_spec(spec)
-        with patch.dict("sys.modules", modules):
-            spec.loader.exec_module(module)
-        self.start_class = module.Start
-        with patch.dict(os.environ, {"SRC_TWO_ATTACK_DIAG": "both"}):
-            self.state = module.Start()
+    def test_fast_glancing_ball_is_not_possession(self):
+        h = Harness()
+        h.velocity = Point(0, 1800)
+        h.settle()
+        self.assertFalse(h.c.held[0])
+        h.velocity = Point(0, 0)
+        h.omegas[0] = 5
+        h.settle()
+        self.assertFalse(h.c.held[0])
 
-    def run_frame(self):
-        with redirect_stdout(io.StringIO()):
-            return self.state.getTasks()
+    def test_invalid_input_in_every_state_stops_without_transition(self):
+        faults = (
+            lambda h: setattr(h, 'ball_valid', False),
+            lambda h: h.robot_valid.update({1: False}),
+            lambda h: setattr(h, 'ball', Point(float('nan'), 0)),
+            lambda h: setattr(h, 'velocity', Point(float('inf'), 0)),
+            lambda h: h.headings.update({0: float('nan')}),
+            lambda h: h.positions.update({1: Point(99999, 0)}),
+            lambda h: h.headings.update({0: 9999}),
+        )
+        for state in ('FirstPass', 'PassBack', 'Shoot', 'FollowShot', 'Done'):
+            for fault in faults:
+                with self.subTest(state=state, fault=fault):
+                    h = Harness()
+                    h.settle()
+                    fault(h)
+                    h.update()
+                    h.clear_commands()
+                    self.assertEqual(h.run(h.state(state)), '')
+                    self.assertEqual(h.cpp.makeItStop.call_count, 2)
+                    h.cpp.makeItRushTo.assert_not_called()
+                    h.kicks.setKick.assert_not_called()
+                    h.kicks.setChipKick.assert_not_called()
+                    self.assertFalse(any(h.c.held.values()))
 
-    def assert_stopped(self):
-        tasks = self.run_frame()
-        self.assertEqual([t.number for t in tasks.values()], [1, 2])
-        for task in tasks.values():
-            task.skill[0](task.number)
-        self.executors["stop"].assert_any_call(1)
-        self.executors["stop"].assert_any_call(2)
-        self.skill.GoAndTurnKick.assert_not_called()
-        self.skill.RushTo.assert_not_called()
-        self.player.toBallDir.assert_not_called()
-        self.power.assert_not_called()
-        self.kick_status.clearAll.assert_called_once()
-        self.cpp.setDribbleCommand.assert_any_call(1, 0)
-        self.cpp.setDribbleCommand.assert_any_call(2, 0)
+    def test_invalid_ball_is_not_read(self):
+        h = Harness()
+        h.ball_valid = False
+        h.ball_api.pos.side_effect = AssertionError('invalid ball read')
+        h.update()
+        h.run(h.state('FirstPass'))
+        h.ball_api.pos.assert_not_called()
 
-    def test_missing_ball_does_not_read_its_position(self):
-        self.ball.valid.return_value = False
-        self.assert_stopped()
-        self.ball.pos.assert_not_called()
+    def test_repeated_frame_and_long_gap_cannot_confirm_possession(self):
+        h = Harness()
+        h.update()
+        for _ in range(5): h.update(fresh=False)
+        self.assertFalse(h.c.valid)
+        h.update(.5)
+        self.assertFalse(h.c.held[0])
+        h.settle()
+        self.assertTrue(h.c.held[0])
 
-    def test_missing_receiver_does_not_compute_direction(self):
-        self.player.isValid.side_effect = lambda n: n != 2
-        self.assert_stopped()
+    def test_pause_keeps_real_ir_dribbler_but_not_kick(self):
+        h = Harness(False)
+        h.ir[0] = True
+        h.settle()
+        h.ball_valid = False
+        h.update()
+        h.run(h.state('Shoot'))
+        h.cpp.setDribbleCommand.assert_any_call(0, A.DRIBBLE_COMMAND)
+        h.cpp.setDribbleCommand.assert_any_call(1, 0)
+        h.kicks.setBothKick.assert_any_call(0, 0, 0)
 
-    def test_sentinel_robot_direction_stops(self):
-        self.player.direction.return_value = -99999.2
-        self.assert_stopped()
+    def test_recovery_does_not_bridge_carry_or_goal(self):
+        h = Harness(False)
+        h.ir[0] = True
+        h.settle()
+        h.c.carry[0] = 100
+        h.ball_valid = False
+        h.update()
+        h.positions[0] = Point(500, 0)
+        h.ball = Point(600, 0)
+        h.ball_valid = True
+        h.update()
+        self.assertEqual(h.c.carry[0], 100)
+        self.assertFalse(h.c.held[0])
+        h.ball = Point(4400, 0)
+        h.ir[0] = False
+        h.update()
+        h.ball_valid = False
+        h.update()
+        h.ball = Point(4600, 0)
+        h.ball_valid = True
+        h.update()
+        self.assertEqual(h.c.outcome, 'out')
 
-    def test_nonfinite_direction_stops(self):
-        self.player.direction.return_value = float("nan")
-        self.assert_stopped()
+    def test_zero_chip_defaults_are_unknown_not_ground(self):
+        h = Harness()
+        feedback = chip_feedback(h.ball_api, (100, 0))
+        self.assertIsNone(feedback.height)
+        self.assertFalse(feedback.ground)
+        self.assertIsNone(feedback.predicted)
 
-    def test_sentinel_position_stops(self):
-        self.player.Pos.return_value = Point(-99999, -99999)
-        self.assert_stopped()
+    def test_stale_height_for_another_position_is_rejected(self):
+        h = Harness()
+        h.native.RealPos = lambda: Point(2000, 2000, 22)
+        self.assertFalse(chip_feedback(h.ball_api, (100, 0)).ground)
 
-    def test_ball_nonfinite_position_stops(self):
-        self.ball.pos.return_value = Point(float("inf"), 0)
-        self.assert_stopped()
+    def test_zero_height_needs_real_xy_and_all_zero_origin_is_unknown(self):
+        h = Harness()
+        h.height = 0
+        self.assertTrue(chip_feedback(h.ball_api, (100, 0)).ground)
+        h.ball = Point(0, 0)
+        self.assertFalse(chip_feedback(h.ball_api, (0, 0)).ground)
 
-    def test_valid_vision_resumes_basic_moves_without_composite_skills(self):
-        self.ball.valid.return_value = False
-        self.run_frame()
-        self.ball.valid.return_value = True
-        tasks = self.run_frame()
-        self.assertEqual([t.number for t in tasks.values()], [1, 2])
-        with redirect_stdout(io.StringIO()):
-            for task in tasks.values():
-                task.skill[0](task.number)
-        self.executors["move"].assert_any_call(1)
-        self.executors["move"].assert_any_call(2)
-        self.skill.GoAndTurnKick.assert_not_called()
-        self.skill.RushTo.assert_not_called()
-        self.kick_status.setKick.assert_not_called()
+    def test_optional_feedback_failure_and_nan_diagnostics_do_not_crash(self):
+        h = Harness(False)
+        h.native.RealPos = lambda: (_ for _ in ()).throw(RuntimeError('unsupported'))
+        h.player.infraredCount.return_value = float('nan')
+        output = mock_open()
+        with patch.object(Path, 'open', output):
+            h.c.telemetry = 'trace.jsonl'
+            h.update()
+            self.assertNotIn('NaN', output().write.call_args.args[0])
 
-    def test_passer_mode_stops_receiver(self):
-        self.state.diagnostic_mode = "passer"
-        tasks = self.run_frame()
-        with redirect_stdout(io.StringIO()):
-            for task in tasks.values():
-                task.skill[0](task.number)
-        self.executors["move"].assert_called_once_with(1)
-        self.executors["stop"].assert_called_once_with(2)
-        self.skill.RushTo.assert_not_called()
-
-    def test_receiver_mode_stops_passer(self):
-        self.state.diagnostic_mode = "receiver"
-        tasks = self.run_frame()
-        with redirect_stdout(io.StringIO()):
-            for task in tasks.values():
-                task.skill[0](task.number)
-        self.executors["move"].assert_called_once_with(2)
-        self.executors["stop"].assert_called_once_with(1)
-        self.skill.GoAndTurnKick.assert_not_called()
-
-    def test_stop_mode_does_not_call_attacking_skills(self):
-        self.state.diagnostic_mode = "stop"
-        self.assert_stopped()
-
-    def test_trace_identifies_skill_that_did_not_return(self):
-        tasks = self.run_frame()
-        self.executors["move"].side_effect = RuntimeError("native call failed")
-        output = io.StringIO()
-        with redirect_stdout(output), self.assertRaises(RuntimeError):
-            tasks["A"].skill[0](1)
-        self.assertIn("ENTER A.BasicPass", output.getvalue())
-        self.assertNotIn("RETURN A.BasicPass", output.getvalue())
-
-    def test_invalid_diagnostic_mode_is_rejected(self):
-        with patch.dict(os.environ, {"SRC_TWO_ATTACK_DIAG": "typo"}):
-            with self.assertRaises(ValueError):
-                self.start_class()
-
-    def prepare_pass(self):
-        self.ball.pos.return_value = Point(100, 0)
-        self.player.Pos.side_effect = lambda n: Point(0, 0) if n == 1 else Point(3200, 0)
-        self.player.direction.side_effect = lambda n: 0 if n == 1 else math.pi
-        self.player.isInfraredOn.return_value = True
-        return Point(3200, 0)
-
-    def test_aligned_holder_can_kick_to_ready_receiver(self):
-        target = self.prepare_pass()
-        execute, _ = self.state._pass_skill(target, 6000)
-        self.kick_status.setKick.assert_not_called()
-        execute(1)
-        self.kick_status.setKick.assert_called_once_with(1, 6000)
-
-    def test_no_kick_without_infrared(self):
-        target = self.prepare_pass()
-        self.player.isInfraredOn.return_value = False
-        self.state._pass_skill(target, 6000)[0](1)
-        self.kick_status.setKick.assert_not_called()
-
-    def test_no_kick_until_receiver_arrives(self):
-        target = self.prepare_pass()
-        self.player.Pos.side_effect = lambda n: Point(0, 0) if n == 1 else Point(2000, 0)
-        self.state._pass_skill(target, 6000)[0](1)
-        self.kick_status.setKick.assert_not_called()
-
-    def test_no_kick_until_passer_aligned(self):
-        target = self.prepare_pass()
-        self.player.direction.side_effect = lambda n: .2 if n == 1 else math.pi
-        self.state._pass_skill(target, 6000)[0](1)
-        self.kick_status.setKick.assert_not_called()
-
-    def test_bad_power_never_reaches_kick_command(self):
-        target = self.prepare_pass()
-        for power in (float("nan"), float("inf"), -1, 0):
-            self.state._pass_skill(target, power)[0](1)
-        self.kick_status.setKick.assert_not_called()
-
-    def test_large_heading_error_rotates_before_translation(self):
-        self.player.direction.return_value = 0
-        target = Point(3200, 800)
-        self.state._move_skill(2, target, math.pi / 2)
-        self.skill.SimpleGoTo.assert_called_once_with(
-            self.player.Pos.return_value, angle=math.pi / 2)
+    def test_default_profiles_are_separate_and_uncalibrated(self):
+        self.assertFalse(load_calibration('real')['chip']['calibrated'])
+        self.assertFalse(load_calibration('simulation')['chip']['calibrated'])
+        self.assertIsNone(load_calibration('real')['mouth_offsets_mm']['0'])
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()

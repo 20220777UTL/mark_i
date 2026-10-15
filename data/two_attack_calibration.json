@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "simulation": {
+    "mouth_offsets_mm": {"0": 82, "1": 82},
+    "chip": {
+      "calibrated": false,
+      "sender": 1,
+      "distance_reference": "first_landing",
+      "observation_verified": false,
+      "curve_fingerprint": null,
+      "min_distance_mm": null,
+      "max_distance_mm": null,
+      "landing_lead_mm": null
+    }
+  },
+  "real": {
+    "mouth_offsets_mm": {"0": null, "1": null},
+    "chip": {
+      "calibrated": false,
+      "sender": 1,
+      "distance_reference": "first_landing",
+      "observation_verified": false,
+      "curve_fingerprint": null,
+      "min_distance_mm": null,
+      "max_distance_mm": null,
+      "landing_lead_mm": null
+    }
+  }
+}

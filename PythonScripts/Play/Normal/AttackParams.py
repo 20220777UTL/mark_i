@@ -1,113 +1,36 @@
-"""two_attack 的可调参数。距离 mm、时间 s、角度 rad；预测值尚未系统标定。"""
+"""Shared control tolerances, not a simulator physics model. mm, seconds, radians.
+
+Robot mouth offsets and chip measurements belong in data/two_attack_calibration.json.
+These conservative defaults still require validation on the actual robots.
+"""
 import math
 
-# 预测模型，不是下发给机器人的限速。
-BALL_DECEL = 800
-PREDICT_STEP = .04
-PREDICT_STEPS = 25
-MODEL_SPEED = 1800
-MODEL_ACCEL = 1800
-STATIONARY_SPEED = 1
-INTERCEPT_TOLERANCE = 30
-TURN_RATE_ESTIMATE = 4
-COMMAND_DELAY = .03
-
-# 普通接球；近距离阶段用距离滞回避免频繁切换。
-MOUTH_OFFSET = 82
-CAPTURE_FRAMES = 3
-FAST_CAPTURE_FRAMES = 2
-CAPTURE_STABLE_SPEED = 180  # 球相对吸球口足够慢时，两帧即可确认；高速擦碰仍需三帧。
-CAPTURE_FRONT_MIN = 65
-CAPTURE_FRONT_MAX = 90
-CAPTURE_SIDE_MAX = 10
-HELD_DISTANCE_MAX = 135
-HELD_ANGLE_MAX = math.radians(40)
-RECEIVE_NEAR_ENTER = 200
-RECEIVE_NEAR_EXIT = 260
-RECEIVE_ALIGN_ANGLE = math.radians(10)
-RECEIVE_PRESS = 30
-RECEIVE_PRESS_SPEED = 200  # 近处收球的期望末速度，不是机器人最高速度。
-RECEIVE_INCOMING_SPEED = 50
-RECEIVE_MOVING_SPEED = 200  # 高于此速度保持拦截姿态，不切换近球前压。
+BALL_RADIUS = 22
 DRIBBLE_COMMAND = 3
-RUSH_MAX_ACC = 0
+POSSESSION_SECONDS = .04
+MAX_FRAME_GAP = .25
+CAPTURE_STABLE_SPEED = 180
+CONTACT_TOLERANCE = BALL_RADIUS
+COMMAND_DELAY = .03
+PREDICT_HORIZON = .2
+MOVING_SPEED = 200
+ALIGN_ANGLE = math.radians(10)
+KICK_ANGLE = math.radians(3)
+APPROACH_DISTANCE = 250
+APPROACH_SPEED = 250
+MAX_ACCEL = 1800
+BRAKE_ACCEL = 1800
+KICK_RETRY_SECONDS = .8
 
-# 出球：无需等待停止转动；按短时预测朝向检查。
-KICK_FRONT_MIN = 65
-KICK_FRONT_MAX = 115
-KICK_SIDE_MAX = 12
-KICK_ANGLE = math.radians(2)
-ALIGN_POSITION_ANGLE = math.radians(8)
-KICK_PREP_ANGLE = math.radians(25)  # 持球且仍在控球容差内时，提前同步位置修正和转向。
-RELEASE_TRAVEL = 180
-RELEASE_DISTANCE = 200
-RELEASE_FAST_TRAVEL = 60
-RELEASE_FAST_DISTANCE = 145
-RELEASE_FAST_SPEED = 600
-RELEASE_FAST_ANGLE = math.radians(15)  # 提前确认必须同时满足出球方向和球速，不能只靠距离。
-
-# TODO 比赛前标定球速并恢复规则限制；测试阶段停用策略力度截断和超速降档。
-# evalPower 的全局/曲线 limits 仍保留，力度数值不是 mm/s。
-ENFORCE_BALL_SPEED = False
-POWER_CAP = 12700
-BALL_SPEED_LIMIT = 6500
-POWER_REDUCTION = .85
-
-# 场地和连续控球约束仍保留。
 CARRY_LIMIT = 850
 CARRY_RESET_DISTANCE = 250
 BOUNDARY_EXTRA = 70
-BRAKE_ACCEL = 1800
-# 倒三角：接应车靠前靠边，回传触点稍退后且偏离中轴；均相对对方禁区前沿定位。
+TOUCH_BALL_CLEARANCE = 180
 ASSISTANT_FRONT_CLEARANCE = 250
 ASSISTANT_SIDE_OFFSET = 1100
 SHOT_CONTACT_CLEARANCE = 450
 SHOT_SIDE_OFFSET = -350
-RECEIVE_RADIUS = 220
-NATIVE_GETBALL_MARGIN = 700
-
-# 球路与门将预测。
-LANE_DELAY = .04
-LANE_SPEEDS = (3000, 4500, 6000)
-BALL_RADIUS = 22
-# 旧椭圆估计参数；two_attack 接射当前使用实测门将位置。
-GOALIE_ELLIPSE_HALF_X = 300
-GOALIE_ELLIPSE_HALF_Y = 500
-KEEPER_BASE_MARGIN = 40
-KEEPER_UNCERTAINTY = 250
-DEFAULT_ROBOT_RADIUS = 90
-SHOT_POST_MARGIN = 90  # 角度选边后的门角目标向门内留出的距离。
-SHOT_TARGET_COUNT = 13
-SHOT_SWITCH_MARGIN = 40
-SHOT_DELAY_PENALTY = 120
-NO_KEEPER_GAP = 1000
+READY_DISTANCE = 100
+SHOT_POST_MARGIN = 90
 GOAL_RAY_MARGIN = 60
-
-# 拦截接射：来球速度补偿、出球角度和回传准备阈值。
-SHOT_SPEED = 1800
-INCOMING_RETAIN = 1.0
-RETURN_SPEED_ESTIMATE = 1500
-REDIRECT_SINE_LIMIT = .8
-TOUCH_TOLERANCE = 25
-TOUCH_TIME_COST = 1000
-INCOMING_SPEED_MIN = 200
-TOUCH_WAIT_DISTANCE = 180
-# 保留旧提前锁定阈值；当前接射在实际出脚后才锁定目标，不再使用这两个阈值。
-SHOT_LOCK_TIME = .15
-SHOT_LOCK_DISTANCE = 120
-TOUCH_ANGLE = math.radians(3)
-TOUCH_MAX_ACC = 1800
-TOUCH_BALL_CLEARANCE = 180  # 未射出的球与禁区前沿之间保留的收球缓冲；不限制正常射门球路。
-TOUCH_APPROACH_DISTANCE = 250
-TOUCH_APPROACH_SPEED = 250  # 近球时机器人朝球方向的接近速度上限，用于提前制动。
-TOUCH_APPROACH_ANGLE = math.radians(8)
-SHOT_RELEASE_VX = 300
-RETURN_READY_DISTANCE = 100
-RETURN_READY_ANGLE = math.radians(8)
-
-# 补射循环：近球直接射，远球由接应者回收后传给主射手；没有自动超时结束。
-REBOUND_SHOT_DISTANCE = 2200  # 球到对方球门中心的距离。
-REBOUND_LOOKAHEAD = .4  # 解围球仍在远离球门时，提前判断是否会越过近射范围。
-REBOUND_MOVING_SPEED = 200
-KEEPER_CONTACT_MARGIN = 60  # 门将半径 + 球半径之外的视觉接触容差。
-KEEPER_VELOCITY_CHANGE = 350  # 接触附近出现速度突变，才记录门将解围，排除自然滚动。
+REBOUND_SHOT_DISTANCE = 2200

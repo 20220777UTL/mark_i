@@ -101,7 +101,6 @@ class GetBallV5State(State):
         self.phase_started = 0.0
         self.case_started = 0.0
         self.frame = 0
-        self.capture_frames = 0
         self.min_distance = float("inf")
         self.valid_frames = 0
         self.samples = 0
@@ -142,7 +141,6 @@ class GetBallV5State(State):
         _replace_scene(case)
         self.phase = "settling"
         self.phase_started = now
-        self.capture_frames = 0
         self.min_distance = float("inf")
         self.valid_frames = 0
         self.samples = 0
@@ -182,9 +180,7 @@ class GetBallV5State(State):
         self.rows.append(row)
         if self.frame % 6 == 0:
             self.log.write(json.dumps(row) + "\n")
-        captured = (A.CAPTURE_FRONT_MIN <= forward <= A.CAPTURE_FRONT_MAX
-                    and abs(sideways) <= A.CAPTURE_SIDE_MAX)
-        self.capture_frames = self.capture_frames + 1 if row["valid"] and captured else 0
+        row["held"] = self.control.held[0]
         return row
 
     def _finish_case(self, now, captured):
@@ -223,9 +219,10 @@ class GetBallV5State(State):
             "ifIntercept": True,
             "baseline": "two_attack.receive() using RushTo, same dribbler command and scene reset",
             "capture_rule": {
-                "forward_mm": [A.CAPTURE_FRONT_MIN, A.CAPTURE_FRONT_MAX],
-                "sideways_abs_mm_max": A.CAPTURE_SIDE_MAX,
-                "consecutive_frames": 3,
+                "mouth_offset_mm": self.control.offsets[0],
+                "contact_tolerance_mm": A.CONTACT_TOLERANCE,
+                "relative_speed_max": A.CAPTURE_STABLE_SPEED,
+                "confirm_seconds": A.POSSESSION_SECONDS,
             },
             "results": self.results,
             "capture_count": sum(item["captured"] for item in self.results),
@@ -268,15 +265,15 @@ class GetBallV5State(State):
             if not (Ball.valid() and Player.isValid(0)):
                 self._finish_case(now, False)
                 return self._stop_tasks()
+            self.control.update()
             row = self._record(now)
-            if self.capture_frames >= 3:
+            if self.control.held[0]:
                 self._finish_case(now, True)
                 return self._stop_tasks()
             if now - self.case_started >= MAX_CASE_SECONDS:
                 self._finish_case(now, False)
                 return self._stop_tasks()
             if self.mode == "current_rushto":
-                self.control.update()
                 task = receive(0, self.control)
                 return {
                     "A": task,
