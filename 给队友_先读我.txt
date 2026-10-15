@@ -1,0 +1,31 @@
+请使用此前录像中已经能跑通的 Windows 比赛软件环境，不要重新安装 Python 或替换 DLL。
+
+首选更新 Git 分支
+先保存你自己的修改，再在仓库根目录执行：
+  git fetch origin
+  git switch test/corner-pass-shot
+  git pull --ff-only
+如果提示本地修改冲突或不能快进，停止并发回提示，不要强制覆盖。
+
+若收到的是补丁 ZIP
+先备份当前 PythonScripts/Config.py 和自己的代码，再将ZIP里的文件按原目录结构合并到已跑通的仓库。
+确认 start_give_and_go.cmd 和 Client.exe 在同一层。补丁包含 Config.py；如果你修改过该配置，先比较合并。
+补丁不包含 exe、dll 或虚拟环境，不是独立安装包，不要单独运行，也不要删除原有 PythonScripts 文件夹。
+
+测试只做这几步
+1. 停止上一轮策略，关闭旧 Client 和旧测试 Medusa。
+2. 双击 start_give_and_go.cmd。不要直接双击普通 Client.exe，否则可能仍是旧策略。
+3. Simulator启动并连接；使用默认场地、默认静止球。确保蓝队1、2号在场，远离对方禁区。
+4. 只点击蓝队 Medusa，黄队不开。录下从开始到结束的完整画面和控制台日志。
+5. 看界面 Current Play 应为 Test_GiveAndGo，日志前缀应为 [give-and-go]。
+   若仍显示 Test_CornerPassShot 或 two_attack，说明启动了旧进程或未进入新测试。
+
+流程：近车取球原地等待 → 远车跑底角 → 近车传球后跑射门点 → 远车控球回传 → 近车迎球直接踢。
+最后阶段不吸球、不调用 StaticGetBall、不找球补射；偏球或超时会结束，这是实验终止条件。
+这不代表每次一定能触球成功。把原始日志和录像发回即可，不要为提高成功率临时改参数。
+
+重试：停止蓝队策略 → 恢复默认静止球和车 → 再启动蓝队。
+测试模式不要依赖裁判盒Stop；需要停止时停止策略并暂停模拟器确认停车。
+
+已完成 Ubuntu 端自动检查，未完成 Windows 原生运行验收；不能承诺零故障或必然一脚进球。
+若程序报错，发完整控制台截图，不要只说“没动”。详细说明见 默认开局完整传射测试.txt。
