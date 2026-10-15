@@ -1,5 +1,6 @@
 ﻿"""蓝 0 主攻、蓝 1 接应：传球、换位、回传、主动拦接后预测射门。
 
+解围后持续补射，直到进球、门将解围出界或手动切换 Play。
 由 Client / Medusa 启动。所有距离 mm，速度 mm/s。POWER_CAP 尚需球速标定。
 """
 import math
@@ -7,13 +8,13 @@ from Play.Normal import AttackParams as A
 import CppPackage as C
 from Geometry import CGeoPoint
 from RoleMatch_LuaStyle import Task, State, StateMachine, declare_state_machine
-from RoleMatch_LuaStyle.Skills import Skill
 from Vision import Ball, Player, Enemy
 from WorldModel import Params, Flags, kickStatus
 from WorldModel.PowerCalculator import evalPower, P
 from Play.Normal.AttackGeometry import (
     angle_error, direction, distance, intercept, clearance, kick_ball_pos,
-    choose_corner_shot, redirect_heading, touch_intercept,
+    choose_corner_shot, redirect_heading, redirect_possible, touch_intercept, ball_at,
+    crossed_goal, static_clearance,
 )
 
 mainshoot, assistant = 0, 1
@@ -21,9 +22,11 @@ mainshoot, assistant = 0, 1
 POWER_CAP, CARRY_LIMIT = A.POWER_CAP, A.CARRY_LIMIT
 MOUTH_OFFSET, CAPTURE_FRAMES = A.MOUTH_OFFSET, A.CAPTURE_FRAMES
 SHOT_SPEED, INCOMING_RETAIN = A.SHOT_SPEED, A.INCOMING_RETAIN
-FRONT_X = Params.pitchLength / 2 - Params.penaltyDepth - A.FRONT_CLEARANCE
-ASSISTANT_POS = CGeoPoint(FRONT_X, A.SIDE_OFFSET)
-MAINSHOOT_POS = CGeoPoint(FRONT_X, -A.SIDE_OFFSET)
+PENALTY_FRONT_X = Params.pitchLength / 2 - Params.penaltyDepth
+ASSISTANT_POS = CGeoPoint(PENALTY_FRONT_X - A.ASSISTANT_FRONT_CLEARANCE, A.ASSISTANT_SIDE_OFFSET)
+# 回传瞄准球的触点，主射手的实际车心还要按接射朝向减去吸球口偏移。
+SHOT_CONTACT = (PENALTY_FRONT_X - A.SHOT_CONTACT_CLEARANCE, A.SHOT_SIDE_OFFSET)
+MAINSHOOT_POS = CGeoPoint(SHOT_CONTACT[0] - MOUTH_OFFSET, SHOT_CONTACT[1])
 RECEIVE_RADIUS = A.RECEIVE_RADIUS
 
 
@@ -51,11 +54,38 @@ def mouth(number):
 
 
 def movement_bounds(number):
-    # 分轴留刹车距离，横向跑位不会无故缩小纵向活动范围。
+    # 仅在速度指向的边界一侧预留制动和指令延迟距离，向场内撤回时不会被另一侧误拦。
     vx, vy = xy(Player.vel(number))
     margin = Params.playerRadius + A.BOUNDARY_EXTRA
-    return (Params.pitchLength / 2 - Params.penaltyDepth - margin - vx * vx / (2 * A.BRAKE_ACCEL),
-            Params.pitchWidth / 2 - margin - vy * vy / (2 * A.BRAKE_ACCEL))
+    bound, width = PENALTY_FRONT_X - margin, Params.pitchWidth / 2 - margin
+    def reserve(v):
+        return max(0, v) * A.COMMAND_DELAY + max(0, v) ** 2 / (2 * A.BRAKE_ACCEL)
+    return -bound + reserve(-vx), bound - reserve(vx), -width + reserve(-vy), width - reserve(vy)
+
+
+def motion_legal(number, p):
+    left, right, bottom, top = movement_bounds(number)
+    return left <= p[0] <= right and bottom <= p[1] <= top and legal(p)
+
+
+def ball_recoverable(p):
+    # 收球触点也留出缓冲，防止合法车心前方的球被继续顶进禁区；正常射门不受此限制。
+    return (abs(p[0]) <= PENALTY_FRONT_X - A.TOUCH_BALL_CLEARANCE
+            and abs(p[1]) <= Params.pitchWidth / 2 - A.BALL_RADIUS - A.BOUNDARY_EXTRA)
+
+
+def contact_destination(number, destination, facing):
+    """接射和降级收球共用近球保护：未对准或接近过快时先停住车心。"""
+    robot, ball = xy(Player.Pos(number)), xy(Ball.pos())
+    toward_ball = direction(robot, ball)
+    vx, vy = xy(Player.vel(number))
+    approach_speed = max(0, vx * math.cos(toward_ball) + vy * math.sin(toward_ball))
+    brake_distance = approach_speed * A.COMMAND_DELAY + approach_speed ** 2 / (2 * A.BRAKE_ACCEL)
+    if distance(robot, ball) <= A.TOUCH_APPROACH_DISTANCE + brake_distance:
+        if (angle_error(Player.direction(number), facing) > A.TOUCH_APPROACH_ANGLE
+                or approach_speed > A.TOUCH_APPROACH_SPEED):
+            return robot
+    return destination
 
 
 def ball_local(number):
@@ -76,17 +106,27 @@ def can_kick(number):
     return A.KICK_FRONT_MIN <= forward <= A.KICK_FRONT_MAX and abs(sideways) <= A.KICK_SIDE_MAX
 
 
+def ball_relative_speed(number):
+    # 转动中的吸球口也有切向速度，不能只比较球和车心的平移速度。
+    vx, vy = xy(Player.vel(number))
+    h, omega = Player.direction(number), Player.rotVel(number)
+    return math.hypot(Ball.vel().x() - vx + omega * MOUTH_OFFSET * math.sin(h),
+                      Ball.vel().y() - vy - omega * MOUTH_OFFSET * math.cos(h))
+
+
 def keeper():
     # 无有效门将观测时返回 None，调用方据此跳过门将避让几何检测。
     return (xy(Enemy.pos(0)), xy(Enemy.vel(0))) if Enemy.valid(0) else (None, (0, 0))
 
 
+def halt(number):
+    C.setDribbleCommand(number, 0)
+    kickStatus.setBothKick(number, 0, 0)
+    C.makeItStop(number)
+
+
 def stop(number):
-    def execute(n):
-        C.setDribbleCommand(n, 0)
-        kickStatus.setBothKick(n, 0, 0)
-        C.makeItStop(n)
-    return Task((execute, lambda n: Player.Pos(n)), fixedNumber=number)
+    return Task((halt, lambda n: Player.Pos(n)), fixedNumber=number)
 
 
 class Control:
@@ -102,13 +142,97 @@ class Control:
         self.return_contact = None
         self.shot_locked = False
         self.receive_near = {mainshoot: False, assistant: False}
+        self.outcome = None
+        self.ball_available = False
+        self.ball_in_field = True
+        self.previous_ball = None
+        self.previous_velocity = None
+        self.previous_keeper = None
+        self.keeper_cleared = False
+        self.shot_origin = None
+        self.shot_departed = False
+        self.rebound_ready = False
+        self.direct_rebound = False
+
+    def observe_ball(self):
+        """每帧追踪真实结果；丢球观测不当作进球/出界，也不跨丢帧插值。"""
+        self.ball_available = Ball.valid()
+        if self.ball_available:
+            ball, velocity = xy(Ball.pos()), xy(Ball.vel())
+            self.ball_available = all(math.isfinite(v) for v in (*ball, *velocity))
+        if not self.ball_available:
+            self.previous_ball = self.previous_velocity = self.previous_keeper = None
+            return False
+
+        goal_x, half_width = Params.pitchLength / 2, Params.pitchWidth / 2
+        self.ball_in_field = (abs(ball[0]) <= goal_x + A.BALL_RADIUS
+                              and abs(ball[1]) <= half_width + A.BALL_RADIUS)
+        keeper_pos, _ = keeper()
+        if keeper_pos is not None and not all(math.isfinite(v) for v in keeper_pos):
+            keeper_pos = None
+        if self.previous_ball is not None:
+            # 用球段到门将的距离捕捉两帧之间的碰撞；还需速度突变，不能只因球路经过门将。
+            def near_keeper(p):
+                # static_clearance 对退化球段返回负无穷；静止球须改用真实点距，避免误记远处门将触球。
+                if distance(self.previous_ball, ball) < 1:
+                    return distance(ball, p) <= Params.playerRadius + A.BALL_RADIUS + A.KEEPER_CONTACT_MARGIN
+                return static_clearance(self.previous_ball, ball, p, Params.playerRadius) <= A.KEEPER_CONTACT_MARGIN
+            nearby = any(near_keeper(p) for p in (self.previous_keeper, keeper_pos) if p is not None)
+            changed = distance(velocity, self.previous_velocity) >= A.KEEPER_VELOCITY_CHANGE
+            if nearby and changed:
+                self.keeper_cleared = True
+            # 必须先判进球，再判出界，否则穿过球门的球会被误记成底线出界。
+            if self.outcome is None and crossed_goal(self.previous_ball, ball, goal_x, Params.goalWidth):
+                self.outcome = 'goal'
+
+        # 我方重新触球后，不能再把后续我方传球/射偏出界归因于上一次门将解围。
+        if any(has_ball(n) for n in (mainshoot, assistant)):
+            self.keeper_cleared = False
+        if self.outcome is None and not self.ball_in_field and self.keeper_cleared:
+            self.outcome = 'keeper_clearance_out'
+
+        if self.shot_origin is not None and not self.outcome:
+            # 不要求仍向前飞：近距离被挡回的球也可能已离脚，不能卡在旧射门的释放检测中。
+            if not can_kick(mainshoot) and distance(self.shot_origin, ball) > A.TOUCH_TOLERANCE:
+                self.shot_departed = True
+            if self.shot_departed:
+                vx, vy = velocity
+                speed = math.hypot(vx, vy)
+                projected_y = ball[1] + (goal_x - ball[0]) * vy / vx if vx > 0 else float('inf')
+                # 球仍朝门内飞就观察；回弹、停下或偏离门框后立即组织下一次进攻。
+                if (vx < -A.REBOUND_MOVING_SPEED or speed <= A.REBOUND_MOVING_SPEED
+                        or abs(projected_y) > Params.goalWidth / 2 - A.BALL_RADIUS):
+                    self.rebound_ready = True
+
+        self.previous_ball, self.previous_velocity, self.previous_keeper = ball, velocity, keeper_pos
+        return True
+
+    def start_shot(self, ball):
+        self.shot_origin = ball
+        self.shot_departed = self.rebound_ready = self.direct_rebound = False
+        self.keeper_cleared = False
+
+    def start_rebound(self):
+        # 每次补射都重选门角、重新规划触点；保留带球里程和解围来源，避免绕过保护。
+        self.shot_origin = None
+        self.shot_departed = self.rebound_ready = False
+        self.shot_locked = False
+        self.shot_target = self.return_contact = None
+        self.receive_near = {mainshoot: False, assistant: False}
+        self.direct_rebound = not rebound_needs_pass()
+        return 'InterceptAndShoot' if self.direct_rebound else 'ReceiveAndReturn'
 
     def update(self):
+        # 只附加结果追踪；原有持球确认、带球里程和力度逻辑保持原样。
+        self.observe_ball()
         for n in self.carry:
             # 连续满足吸球几何条件若干帧后才确认持球，抑制单帧视觉抖动。
             self.capture_frames[n] = min(CAPTURE_FRAMES, self.capture_frames[n] + 1) if has_ball(n) else 0
             forward, sideways = ball_local(n)
-            if self.capture_frames[n] >= CAPTURE_FRAMES:
+            # 低相对速度、连续两帧在吸球窗口内可提前确认；擦碰/高速来球沿用三帧检测。
+            settled = (self.capture_frames[n] >= A.FAST_CAPTURE_FRAMES
+                       and ball_relative_speed(n) <= A.CAPTURE_STABLE_SPEED)
+            if self.capture_frames[n] >= CAPTURE_FRAMES or settled:
                 self.held[n] = True
             # 球已跑到车后、离车过远或偏角过大时立即撤销持球状态。
             elif forward <= 0 or math.hypot(forward, sideways) > A.HELD_DISTANCE_MAX or abs(math.atan2(sideways, forward)) > A.HELD_ANGLE_MAX:
@@ -128,20 +252,17 @@ class Control:
             print(f'TWO_ATTACK: ball speed {speed/1000:.2f} m/s exceeds limit; power cap -> {self.cap:.0f}', flush=True)
 
     def allowed(self, n):
-        x, y = xy(Player.Pos(n))
-        bound, width = movement_bounds(n)
         # 任务继续前同时检查带球里程、含刹车距离的场地边界和禁区合法性。
-        return (self.carry[n] < CARRY_LIMIT and abs(x) <= bound
-                and abs(y) <= width and legal((x, y)))
+        return self.carry[n] < CARRY_LIMIT and motion_legal(n, xy(Player.Pos(n)))
 
 
-def move_to(number, target, control, angle=None, velocity=None, fetching=False, flags=None):
+def move_to(number, target, control, angle=None, velocity=None, fetching=False, flags=None, max_acc=None):
     flags = Flags.allow_dss if flags is None else flags
     destination = xy(target)
-    bound, width = movement_bounds(number)
+    left, right, bottom, top = movement_bounds(number)
     # 先裁剪目标以给机器人留出制动空间，再对裁剪后的点做边界/禁区校验。
-    destination = (max(-bound, min(bound, destination[0])),
-                   max(-width, min(width, destination[1])))
+    destination = (max(left, min(right, destination[0])),
+                   max(bottom, min(top, destination[1])))
     # 目标仍非法或机器人已触发场地/带球限制时直接停车，不执行越界移动。
     if not legal(destination) or not control.allowed(number):
         return stop(number)
@@ -153,23 +274,25 @@ def move_to(number, target, control, angle=None, velocity=None, fetching=False, 
         if fetching:
             C.TaskMediator.Instance().registerRole(n, "fetchBall")
         C.makeItRushTo(n, target, angle, flag=flags,
-                       maxAcc=A.RUSH_MAX_ACC, needDribble=True,
+                       maxAcc=A.RUSH_MAX_ACC if max_acc is None else max_acc, needDribble=True,
                        vel=C.CVector(*(velocity or (0, 0))))
     return Task((execute, lambda n: target), fixedNumber=number)
 
 
-def receive(number, control):
+def receive(number, control, *, press=True):
     """远处预测拦截，近处先对球再小幅收球；全程 RushTo。"""
     robot, ball = xy(Player.Pos(number)), xy(Ball.pos())
     if not control.allowed(number):
         return stop(number)
     # 已确认持球时保持原地和当前朝向，避免接球任务继续追逐球导致推球。
     if control.held[number]:
-        return move_to(number, Player.Pos(number), control, Player.direction(number))
+        return move_to(number, Player.Pos(number), control, Player.direction(number),
+                       max_acc=None if press else A.TOUCH_MAX_ACC)
     # 进入和退出近球模式使用不同距离阈值，形成滞回，减少模式频繁切换。
     threshold = A.RECEIVE_NEAR_EXIT if control.receive_near[number] else A.RECEIVE_NEAR_ENTER
     control.receive_near[number] = (distance(robot, ball) <= threshold
-                                    and Ball.velMod() <= A.RECEIVE_MOVING_SPEED)
+                                    and Ball.velMod() <= A.RECEIVE_MOVING_SPEED
+                                    and ball_recoverable(ball))
     velocity = None
     if control.receive_near[number]:
         angle = direction(robot, ball)
@@ -179,16 +302,24 @@ def receive(number, control):
             # 正面来球仍在靠近时留在接触距离；静止/远离时才小幅前压。
             closing = (Ball.vel().x() * math.cos(angle) + Ball.vel().y() * math.sin(angle)
                        < -A.RECEIVE_INCOMING_SPEED)
-            offset = MOUTH_OFFSET if closing else MOUTH_OFFSET - A.RECEIVE_PRESS
-            if not closing:
+            offset = MOUTH_OFFSET if closing or not press else MOUTH_OFFSET - A.RECEIVE_PRESS
+            if not closing and press:
                 velocity = (A.RECEIVE_PRESS_SPEED * math.cos(angle),
                             A.RECEIVE_PRESS_SPEED * math.sin(angle))
             destination = (ball[0] - offset * math.cos(angle), ball[1] - offset * math.sin(angle))
     else:
         destination, angle = intercept(ball, xy(Ball.vel()), robot, xy(Player.vel(number)),
-                                       legal, MOUTH_OFFSET, with_heading=True, robot_heading=Player.direction(number))
+                                       lambda p: motion_legal(number, p), MOUTH_OFFSET,
+                                       with_heading=True, robot_heading=Player.direction(number),
+                                       contact_legal=ball_recoverable)
+    flags = 0 if control.receive_near[number] else Flags.allow_dss
+    if not press:
+        # 降级收球也必须减速/先转向，不能绕过接射时的防顶球保护。
+        destination = contact_destination(number, destination, angle)
+        if distance(robot, ball) > A.TOUCH_APPROACH_DISTANCE:
+            flags |= Flags.dodge_ball
     return move_to(number, point(destination), control, angle, velocity, fetching=True,
-                   flags=0 if control.receive_near[number] else Flags.allow_dss)
+                   flags=flags, max_acc=None if press else A.TOUCH_MAX_ACC)
 
 
 def lane_clear(target):
@@ -198,7 +329,7 @@ def lane_clear(target):
                                        Params.playerRadius) for s in A.LANE_SPEEDS) > 0
 
 
-def kick_to(number, target, state, level=P.HIGH, shooting=False):
+def kick_to(number, target, state, level=P.HIGH, shooting=False, allow_kick=True):
     """拿到球才转向；按预计出球方向判断，不等固定转速阈值。"""
     if not state.control.allowed(number):
         return stop(number)
@@ -222,7 +353,7 @@ def kick_to(number, target, state, level=P.HIGH, shooting=False):
         C.makeItSimpleGoTo(n, centre, desired, 0)
         predicted = Player.direction(n) + Player.rotVel(n) * A.COMMAND_DELAY
         # 出球条件同时要求控稳、球在击球窗口内且短时预测朝向已对齐。
-        ready = state.control.held[n] and can_kick(n) and angle_error(predicted, desired) < A.KICK_ANGLE
+        ready = allow_kick and state.control.held[n] and can_kick(n) and angle_error(predicted, desired) < A.KICK_ANGLE
         if shooting and ready:
             # 实际预计射线也必须落在门柱内，并避开运动门将。
             dx = Params.pitchLength / 2 - Ball.posX()
@@ -242,6 +373,7 @@ def kick_to(number, target, state, level=P.HIGH, shooting=False):
                 # 只记录有效正功率；首次触发时保存球位置供后续“球已释放”检测使用。
                 kickStatus.setKick(n, power)
                 state.control.last_power = power
+                state.control.keeper_cleared = False
                 if state.fired is None:
                     state.fired = xy(Ball.pos())
     return Task((execute, lambda n: Ball.pos()), fixedNumber=number)
@@ -250,9 +382,20 @@ def kick_to(number, target, state, level=P.HIGH, shooting=False):
 class AttackState(State):
     def __init__(self):
         super().__init__()
-        self.fired = None
-        self.target = None
+        self.reset_attempt()
+
+    def reset_attempt(self):
+        # 状态实例会复用；再次进入时必须清掉上一脚的 fired/target，才能继续传射。
+        self.fired = self.target = None
         self.incoming_seen = False
+
+    def run(self, isStateSwitched):
+        # 只附加终止检测；结束当帧先停车，原有任务执行与状态切换顺序保持不变。
+        if self.control.outcome:
+            halt(mainshoot)
+            halt(assistant)
+            return 'Done'
+        return super().run(isStateSwitched)
 
     def getMatchString(self):
         return ''
@@ -261,14 +404,27 @@ class AttackState(State):
         return ''
 
     def released(self, number):
-        # 既要球相对出球点移动足够远，也要与机器人拉开距离，才算完成释放。
-        return (self.fired is not None and distance(self.fired, xy(Ball.pos())) > A.RELEASE_TRAVEL
-                and Player.Pos(number).dist(Ball.pos()) > A.RELEASE_DISTANCE)
+        if self.fired is None:
+            return False
+        ball = xy(Ball.pos())
+        travel, separation = distance(self.fired, ball), Player.Pos(number).dist(Ball.pos())
+        # 慢球保留原距离确认；正常快速传球离开击球口且方向、速度一致时尽早开始换位。
+        if travel > A.RELEASE_TRAVEL and separation > A.RELEASE_DISTANCE:
+            return True
+        target = xy(self.target) if self.target is not None else self.control.shot_target
+        if target is None or travel <= A.RELEASE_FAST_TRAVEL or separation <= A.RELEASE_FAST_DISTANCE:
+            return False
+        intended = direction(self.fired, target)
+        return (angle_error(direction(self.fired, ball), intended) < A.RELEASE_FAST_ANGLE
+                and angle_error(direction((0, 0), xy(Ball.vel())), intended) < A.RELEASE_FAST_ANGLE
+                and Ball.velMod() >= A.RELEASE_FAST_SPEED)
 
 
 class GetFirstBall(AttackState):
     def getTasks(self):
-        return {'A': receive(mainshoot, self.control), 'B': move_to(assistant, ASSISTANT_POS, self.control)}
+        # 控球后即可预转向接应点，与接应者跑位并行；到位条件满足前不出球。
+        return {'A': kick_to(mainshoot, ASSISTANT_POS, self, allow_kick=False),
+                'B': move_to(assistant, ASSISTANT_POS, self.control)}
 
     def transFunction(self):
         # 主攻手确认控球、接应者到位且传球通道畅通后才启动传球状态。
@@ -279,7 +435,13 @@ class GetFirstBall(AttackState):
 
 class PassToAssistant(AttackState):
     def getTasks(self):
-        if self.target is None:
+        if self.released(mainshoot):
+            # 状态切换在任务执行后发生，这一帧先启动换位和接球，不额外空等一帧。
+            centre, angle = prepare_return(self.control)
+            return {'A': move_to(mainshoot, point(centre), self.control, angle, flags=Flags.allow_dss | Flags.dodge_ball),
+                    'B': receive(assistant, self.control)}
+        if self.fired is None:
+            # 出脚前跟随接应车的实际吸球口，避免锁定过早留下转向/位置误差。
             self.target = point(mouth(assistant))
         return {'A': kick_to(mainshoot, self.target, self),
                 'B': move_to(assistant, Player.Pos(assistant), self.control)}
@@ -292,14 +454,12 @@ class PassToAssistant(AttackState):
 class ReceiveAndReturn(AttackState):
     def getTasks(self):
         centre, angle = prepare_return(self.control)
-        return {'A': move_to(mainshoot, point(centre), self.control, angle), 'B': receive(assistant, self.control)}
+        # 接应者拿稳球后立即预转向回传点；与主射手的跑位/对准同时进行。
+        return {'A': move_to(mainshoot, point(centre), self.control, angle, flags=Flags.allow_dss | Flags.dodge_ball),
+                'B': kick_to(assistant, point(self.control.return_contact), self, allow_kick=False)}
 
     def transFunction(self):
-        centre, angle = prepare_return(self.control)
-        # 接应车控稳后，主攻手还需到达预备点、对准回传方向且回传通道畅通。
-        if (self.control.held[assistant] and distance(xy(Player.Pos(mainshoot)), centre) < A.RETURN_READY_DISTANCE
-                and angle_error(Player.direction(mainshoot), angle) < A.RETURN_READY_ANGLE
-                and lane_clear(point(self.control.return_contact))):
+        if self.control.held[assistant] and return_ready(self.control):
             return 'PassBack'
         return ''
 
@@ -309,8 +469,8 @@ class PassBack(AttackState):
         centre, angle = prepare_return(self.control)
         if self.target is None:
             self.target = point(self.control.return_contact)
-        return {'A': move_to(mainshoot, point(centre), self.control, angle),
-                'B': kick_to(assistant, self.target, self)}
+        return {'A': move_to(mainshoot, point(centre), self.control, angle, flags=Flags.allow_dss | Flags.dodge_ball),
+                'B': kick_to(assistant, self.target, self, allow_kick=return_ready(self.control))}
 
     def transFunction(self):
         # 接应者完成回传后，主攻手切换为预判拦截和射门。
@@ -330,7 +490,7 @@ def select_touch_target(control, contact):
 def prepare_return(control):
     # 回传触球点只初始化一次，后续用估计来球速度计算能把球导向门内的车头角度。
     if control.return_contact is None:
-        control.return_contact = (MAINSHOOT_POS.x() + MOUTH_OFFSET, MAINSHOOT_POS.y())
+        control.return_contact = SHOT_CONTACT
     contact = control.return_contact
     select_touch_target(control, contact)
     pass_dir = direction(xy(Ball.pos()), contact)
@@ -339,56 +499,55 @@ def prepare_return(control):
     return (contact[0] - MOUTH_OFFSET * math.cos(angle), contact[1] - MOUTH_OFFSET * math.sin(angle)), angle
 
 
-def touch_shot(state):
-    control = state.control
-    # 不满足控球/边界约束或射门已释放时不再继续拦截，避免多次下发击球。
-    if not control.allowed(mainshoot) or state.released(mainshoot):
-        return stop(mainshoot)
-    if Ball.velMod() > A.INCOMING_SPEED_MIN:
-        state.incoming_seen = True
-    # 尚未观察到明显来球且球仍较远时，先去预备触球位；否则开始预测拦截。
-    if not state.incoming_seen and Player.Pos(mainshoot).dist(Ball.pos()) > A.TOUCH_WAIT_DISTANCE:
-        centre, angle = prepare_return(control)
-        return move_to(mainshoot, point(centre), control, angle)
-    target = control.shot_target or (Params.pitchLength / 2, 0)
-    args = (xy(Ball.pos()), xy(Ball.vel()), xy(Player.Pos(mainshoot)),
-            xy(Player.vel(mainshoot)), Player.direction(mainshoot))
-    plan = touch_intercept(*args, target, legal, MOUTH_OFFSET, SHOT_SPEED, INCOMING_RETAIN)
-    # 无合法触球方案时停车，避免使用过期或越界的拦截点。
-    if plan is None:
-        return stop(mainshoot)
-    contact = plan[0]
-    select_touch_target(control, contact)
-    plan = touch_intercept(*args, control.shot_target, legal, MOUTH_OFFSET, SHOT_SPEED, INCOMING_RETAIN)
-    # 更新射门目标后重新求解触球点；目标变化可能改变补偿角和可达性。
-    if plan is None:
-        return stop(mainshoot)
-    _, centre, _, angle = plan
-    bound, width = movement_bounds(mainshoot)
-    centre = (max(-bound, min(bound, centre[0])), max(-width, min(width, centre[1])))
-    # 再次核对裁剪后的预测车心；若拦截方案越界则停车，不执行该方案。
-    if not legal(centre):
-        return stop(mainshoot)
+def return_ready(control):
+    centre, angle = prepare_return(control)
+    # 回传出脚前仍需检查主射手的位置、朝向和通道，预转向不意味着提前传球。
+    return (control.allowed(mainshoot) and ball_recoverable(control.return_contact)
+            and motion_legal(mainshoot, centre)
+            and distance(xy(Player.Pos(mainshoot)), centre) < A.RETURN_READY_DISTANCE
+            and angle_error(Player.direction(mainshoot), angle) < A.RETURN_READY_ANGLE
+            and lane_clear(point(control.return_contact)))
 
+
+def touch_motion(state, centre, angle):
+    """将检查过的车心坐标直接下发；接近球时先刹车和对准，出脚后不再追球。"""
+    control = state.control
     def execute(n):
+        if not control.allowed(n):
+            halt(n)
+            return
+        robot, ball, velocity = xy(Player.Pos(n)), xy(Ball.pos()), xy(Ball.vel())
         kick_ready = can_kick(n)
         # 球进入击球窗口时，以当前球位和最新门将位置重新选角，避免沿用接球途中的目标。
         if kick_ready:
-            select_touch_target(control, xy(Ball.pos()))
-        desired = redirect_heading(xy(Ball.pos()), control.shot_target, xy(Ball.vel()), SHOT_SPEED, INCOMING_RETAIN)
-        # 远处沿预测拦截朝向接球；准备出球时立即朝向重新选出的门角。
-        v5_skill, _ = Skill.GetBallV5(desired if kick_ready else angle, ifIntercept=True)
-        # GetBallV5 不会自行开启吸球；持续吸球以稳定拦接来球。
+            select_touch_target(control, ball)
+        desired = redirect_heading(ball, control.shot_target, velocity, SHOT_SPEED, INCOMING_RETAIN)
+        feasible = redirect_possible(ball, control.shot_target, velocity, SHOT_SPEED, INCOMING_RETAIN)
+        destination, facing = contact_destination(n, centre, angle), angle
+        gap = distance(robot, ball)
+        if kick_ready:
+            # 已到击球口就保持车心；不能为瞄准再往前压球。无法补偿的快球先吸住再射。
+            destination = robot
+            facing = desired if feasible else Player.direction(n)
+        if not motion_legal(n, destination):
+            halt(n)
+            return
+        flags = Flags.allow_dss
+        if gap > A.TOUCH_APPROACH_DISTANCE:
+            flags |= Flags.dodge_ball  # 远处换位绕球，避免车身横穿来球路径。
         C.setDribbleCommand(n, A.DRIBBLE_COMMAND)
-        v5_skill(n)
+        C.TaskMediator.Instance().registerRole(n, 'fetchBall')
+        # 明确使用安全拦截点和零末速度；仅传朝向的 GetBallV5 无法遵守这里的位置约束。
+        C.makeItRushTo(n, point(destination), facing, flag=flags,
+                       maxAcc=A.TOUCH_MAX_ACC, needDribble=True, vel=C.CVector(0, 0))
         kickStatus.setBothKick(n, 0, 0)
         # 使用当前可击打范围；不等待 held、停球或门将让出球路。
         h = Player.direction(n) + Player.rotVel(n) * A.COMMAND_DELAY
-        vx = SHOT_SPEED * math.cos(h) + INCOMING_RETAIN * Ball.vel().x()
-        vy = SHOT_SPEED * math.sin(h) + INCOMING_RETAIN * Ball.vel().y()
-        goal_y = Ball.posY() + (Params.pitchLength / 2 - Ball.posX()) * vy / vx if vx > 0 else float('inf')
+        out_x = SHOT_SPEED * math.cos(h) + INCOMING_RETAIN * velocity[0]
+        out_y = SHOT_SPEED * math.sin(h) + INCOMING_RETAIN * velocity[1]
+        goal_y = ball[1] + (Params.pitchLength / 2 - ball[0]) * out_y / out_x if out_x > 0 else float('inf')
         # 只有球在击球窗口内、预计触球朝向正确且合成出球射线命中门内，才允许触球射门。
-        if kick_ready and angle_error(h, desired) < A.TOUCH_ANGLE and abs(goal_y) < Params.goalWidth / 2 - A.GOAL_RAY_MARGIN:
+        if kick_ready and feasible and angle_error(h, desired) < A.TOUCH_ANGLE and abs(goal_y) < Params.goalWidth / 2 - A.GOAL_RAY_MARGIN:
             power = min(control.cap, evalPower(Ball.pos(), point(control.shot_target), P.HIGH))
             if math.isfinite(power) and power > 0:
                 kickStatus.setKick(n, power)
@@ -396,11 +555,53 @@ def touch_shot(state):
                 control.shot_locked = True
                 if state.fired is None:
                     state.fired = xy(Ball.pos())
+                    control.start_shot(state.fired)
     return Task((execute, lambda n: Ball.pos()), fixedNumber=mainshoot)
+
+
+def touch_shot(state):
+    control = state.control
+    if not control.allowed(mainshoot) or state.released(mainshoot):
+        return stop(mainshoot)
+    # 已下发射门且球已离开击球口时只等待释放确认，不能把射出的球再次当作拦截目标。
+    if state.fired is not None and not can_kick(mainshoot):
+        return stop(mainshoot)
+    ball, velocity = xy(Ball.pos()), xy(Ball.vel())
+    robot = xy(Player.Pos(mainshoot))
+    select_touch_target(control, ball)
+    if can_kick(mainshoot):
+        # 已可直接击球时跳过离散预测，当前帧即可瞄准出脚。
+        return touch_motion(state, robot, Player.direction(mainshoot))
+
+    future = ball_at(ball, velocity, A.PREDICT_STEP * A.PREDICT_STEPS)
+    if not ball_recoverable(ball) and not ball_recoverable(future):
+        # 球已进入不可追的区域时退回合法接应位；每帧重评，球滚出后自动恢复接球。
+        centre, _ = prepare_return(control)
+        return move_to(mainshoot, point(centre), control, Player.toBallDir(mainshoot),
+                       flags=Flags.allow_dss | Flags.dodge_ball, max_acc=A.TOUCH_MAX_ACC)
+
+    args = (ball, velocity, robot, xy(Player.vel(mainshoot)), Player.direction(mainshoot))
+    target = control.shot_target
+    plan = touch_intercept(*args, target, lambda p: motion_legal(mainshoot, p),
+                           MOUTH_OFFSET, SHOT_SPEED, INCOMING_RETAIN, contact_legal=ball_recoverable)
+    if plan is not None:
+        select_touch_target(control, plan[0])
+        # 仅在目标换边时重新计算，避免每帧无条件重复整段预测。
+        if control.shot_target != target:
+            plan = touch_intercept(*args, control.shot_target, lambda p: motion_legal(mainshoot, p),
+                                   MOUTH_OFFSET, SHOT_SPEED, INCOMING_RETAIN, contact_legal=ball_recoverable)
+    if plan is None:
+        # 来不及转向/刹停或来球太快时正面收球，接近时不前压；收稳后仍可在此状态射门。
+        return receive(mainshoot, control, press=False)
+    _, centre, _, angle = plan
+    return touch_motion(state, centre, angle)
 
 
 class InterceptAndShoot(AttackState):
     def getTasks(self):
+        if self.control.direct_rebound and self.fired is None and rebound_needs_pass():
+            # 解围球继续远离球门时改走一脚回传，同一帧开始回收和主射手跑位。
+            return ReceiveAndReturn.getTasks(self)
         return {'A': touch_shot(self), 'B': stop(assistant)}
 
     def released(self, number):
@@ -408,9 +609,32 @@ class InterceptAndShoot(AttackState):
         return super().released(number) and Ball.vel().x() > A.SHOT_RELEASE_VX
 
     def transFunction(self):
-        # 只有确认球已向前射出并与机器人分离，才结束本次进攻流程。
-        if self.released(mainshoot):
-            return 'Done'
+        if self.control.direct_rebound and self.fired is None and rebound_needs_pass():
+            self.control.direct_rebound = False
+            return 'ReceiveAndReturn'
+        # 出脚/离脚仅进入观察，不能当作进球或本轮结束；被快速挡回时同样进入观察。
+        if self.control.shot_departed or self.released(mainshoot):
+            return 'FollowShot'
+        return ''
+
+
+def rebound_needs_pass():
+    """按球到门中心的距离分流，兼顾解围球短时继续远离球门的趋势。"""
+    ball = xy(Ball.pos())
+    future = ball_at(ball, xy(Ball.vel()), A.REBOUND_LOOKAHEAD)
+    goal = (Params.pitchLength / 2, 0)
+    return max(distance(ball, goal), distance(future, goal)) > A.REBOUND_SHOT_DISTANCE
+
+
+class FollowShot(AttackState):
+    def getTasks(self):
+        # 射门仍在飞行时不追入禁区；没有补射次数或等待时长上限。
+        return {'A': stop(mainshoot), 'B': stop(assistant)}
+
+    def transFunction(self):
+        if self.control.ball_available and self.control.ball_in_field and self.control.rebound_ready:
+            # 远球复用 ReceiveAndReturn -> PassBack -> InterceptAndShoot，只补一脚传球。
+            return self.control.start_rebound()
         return ''
 
 
@@ -420,7 +644,7 @@ class Done(AttackState):
 
 
 @declare_state_machine(GetFirstBall, PassToAssistant, ReceiveAndReturn, PassBack,
-                       InterceptAndShoot, Done)
+                       InterceptAndShoot, FollowShot, Done)
 class two_attack(StateMachine):
     def __init__(self):
         super().__init__()
@@ -433,13 +657,16 @@ class two_attack(StateMachine):
         if Global.isPlaySwitched:
             self.control = Control()
             for state in self.states.values():
-                state.fired = state.target = None
-                state.incoming_seen = False
+                state.reset_attempt()
+            self.last_state = None
         self.control.update()
         for state in self.states.values():
             state.control = self.control
-        name = self.current_state.state_name
+        # 框架稍后才恢复 start_state；这里同步选择它，避免重开时重置错状态。
+        active = self.start_state if Global.isPlaySwitched else self.current_state
+        name = active.state_name
         # 仅在状态变化时打印，避免每个控制周期重复输出相同状态。
         if name != self.last_state:
+            active.reset_attempt()
             print('TWO_ATTACK:', name, flush=True)
             self.last_state = name

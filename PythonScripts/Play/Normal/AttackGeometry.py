@@ -34,12 +34,25 @@ def ball_at(ball, velocity, t, decel=A.BALL_DECEL):
             ball[1] + velocity[1] / speed * travel)
 
 
-def intercept(ball, velocity, robot, robot_velocity, legal, mouth=A.MOUTH_OFFSET, *, with_heading=False, robot_heading=None):
+def crossed_goal(previous, current, goal_x, goal_width):
+    """相邻有效观测中，整颗球从场内越过对方门线且通过门柱之间才算进球。"""
+    line = goal_x + A.BALL_RADIUS
+    if previous is None or not previous[0] < line <= current[0]:
+        return False
+    ratio = (line - previous[0]) / (current[0] - previous[0])
+    crossing_y = previous[1] + ratio * (current[1] - previous[1])
+    return abs(crossing_y) <= goal_width / 2 - A.BALL_RADIUS
+
+
+def intercept(ball, velocity, robot, robot_velocity, legal, mouth=A.MOUTH_OFFSET, *, with_heading=False, robot_heading=None, contact_legal=None):
     """选最早赶得上的合法接球点；预测范围 1 s，不追到禁区里。"""
     best, cost = (robot, direction(robot, ball)), float('inf')
     for step in range(1, A.PREDICT_STEPS + 1):
         t = step * A.PREDICT_STEP
         future = ball_at(ball, velocity, t)
+        # 机器人中心合法还不够：收球位置本身也要留在可控的禁区外缓冲范围。
+        if contact_legal is not None and not contact_legal(future):
+            continue
         facing = (math.atan2(-velocity[1], -velocity[0])
                   if math.hypot(*velocity) > A.RECEIVE_MOVING_SPEED else direction(robot, future))
         centre = (future[0] - mouth * math.cos(facing),
@@ -179,33 +192,59 @@ def redirect_heading(ball, target, incoming, shot_speed, retain):
     return aim + math.asin(correction)
 
 
+def redirect_possible(ball, target, incoming, shot_speed, retain):
+    """判断来球速度是否能被当前击球模型补偿；截断反正弦不等于物理上可射中。"""
+    aim = direction(ball, target)
+    lateral = -incoming[0] * math.sin(aim) + incoming[1] * math.cos(aim)
+    sine = -retain * lateral / shot_speed
+    if abs(sine) > A.REDIRECT_SINE_LIMIT:
+        return False
+    forward = incoming[0] * math.cos(aim) + incoming[1] * math.sin(aim)
+    return shot_speed * math.sqrt(1 - sine * sine) + retain * forward > 0
+
+
+def stopping_reach(t, speed0):
+    """一维加速再刹停模型：给定时间内、末速度为零时能前进的最大距离。"""
+    if abs(speed0) > A.MODEL_SPEED or t < abs(speed0) / A.MODEL_ACCEL:
+        return None  # 连当前速度都刹不住，不能声称已能在触球点停稳。
+    peak = min(A.MODEL_SPEED, (A.MODEL_ACCEL * t + speed0) / 2)
+    accelerating = (peak - speed0) / A.MODEL_ACCEL
+    braking = peak / A.MODEL_ACCEL
+    return ((speed0 + peak) * accelerating / 2 + peak * braking / 2
+            + peak * max(0, t - accelerating - braking))
+
+
 def touch_intercept(ball, velocity, robot, robot_velocity, heading, target,
-                    legal, mouth, shot_speed, retain):
-    """以射门朝向拦球，返回球的触点、车心、到球时间和朝向。"""
-    best, cost = None, float('inf')
+                    legal, mouth, shot_speed, retain, *, contact_legal=None):
+    """只返回能合法到达并刹停、完成转向的接射方案；无可行方案时由调用方改为收球。"""
     for step in range(A.PREDICT_STEPS + 1):
         t = step * A.PREDICT_STEP
         contact = ball_at(ball, velocity, t)
+        if contact_legal is not None and not contact_legal(contact):
+            continue
         speed = math.hypot(*velocity)
         # 球速太低时不计算减速比例，避免除零；此时按静止球处理。
         factor = max(0, 1 - A.BALL_DECEL * t / speed) if speed > A.STATIONARY_SPEED else 0
         incoming = (velocity[0] * factor, velocity[1] * factor)
+        if not redirect_possible(contact, target, incoming, shot_speed, retain):
+            continue
         facing = redirect_heading(contact, target, incoming, shot_speed, retain)
         centre = (contact[0] - mouth * math.cos(facing), contact[1] - mouth * math.sin(facing))
         # 拦截中心必须合法；不合法的未来触球点直接排除。
         if not legal(centre):
             continue
         move_dir = direction(robot, centre)
-        speed0 = max(-A.MODEL_SPEED, min(A.MODEL_SPEED, robot_velocity[0] * math.cos(move_dir)
-                              + robot_velocity[1] * math.sin(move_dir)))
-        accelerating = min(t, (A.MODEL_SPEED - speed0) / A.MODEL_ACCEL)
-        reachable = speed0 * accelerating + 0.5 * A.MODEL_ACCEL * accelerating ** 2 + A.MODEL_SPEED * (t - accelerating)
-        deficit = max(distance(robot, centre) - A.TOUCH_TOLERANCE - reachable,
-                      (angle_error(heading, facing) / A.TURN_RATE_ESTIMATE - t - A.COMMAND_DELAY) * A.TOUCH_TIME_COST)
-        candidate = contact, centre, t, facing
-        # 按时间顺序返回首个平移和转向都来得及的触球点，否则保留欠缺最小的方案。
-        if deficit <= 0:
-            return candidate
-        if deficit < cost:
-            best, cost = candidate, deficit
-    return best
+        speed0 = robot_velocity[0] * math.cos(move_dir) + robot_velocity[1] * math.sin(move_dir)
+        available = max(0, t - A.COMMAND_DELAY)
+        # 横向速度也需要刹停；仅看朝目标方向的投影会漏掉高速横穿触点的情况。
+        if math.hypot(*robot_velocity) > A.MODEL_ACCEL * available:
+            continue
+        reachable = stopping_reach(available, speed0)
+        travel = distance(robot, centre)
+        # 还要检查最短刹车距离，排除速度过高、必然冲过触点的候选。
+        braking = max(0, speed0) ** 2 / (2 * A.MODEL_ACCEL)
+        turn_time = angle_error(heading, facing) / A.TURN_RATE_ESTIMATE
+        if (reachable is not None and travel - A.TOUCH_TOLERANCE <= reachable
+                and braking <= travel + A.TOUCH_TOLERANCE and turn_time <= available):
+            return contact, centre, t, facing
+    return None
