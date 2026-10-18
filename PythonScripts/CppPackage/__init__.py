@@ -9,7 +9,7 @@ _current_file_path = Path(__file__).resolve()
 _dll_path = _current_file_path.parent.parent.parent # 即ZBin/
 
 if hasattr(os, "add_dll_directory"):
-    os.add_dll_directory(str(_dll_path))
+    _dll_directory_handle = os.add_dll_directory(str(_dll_path))
     
 # 添加 DLL 路径（Python ≥ 3.8）
 # if hasattr(os, "add_dll_directory"):

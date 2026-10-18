@@ -1,0 +1,32 @@
+{
+  "video": "20261018-0805-45.9636885.mp4",
+  "duration_seconds": 200.666633,
+  "version_records": {
+    "combo_2.32_dynamic_roles": 2450
+  },
+  "role_records": {
+    "{\"A\": 0, \"B\": 1}": 2450
+  },
+  "force_start_seconds_approx": 18.45,
+  "force_start_visual_bracket": [
+    18.4,
+    18.5
+  ],
+  "window_end_seconds": 198.45,
+  "alignment_uncertainty_seconds": 0.15,
+  "physical_shots": 10,
+  "goals": 8,
+  "wide": 2,
+  "conversion": 0.8,
+  "finish_opportunities": 11,
+  "no_departure_rounds": [
+    7
+  ],
+  "entire_video": {
+    "physical_shots": 10,
+    "goals": 8,
+    "wide": 2
+  },
+  "method": "Actual outgoing shots and goal-mouth crossings visually reviewed against aligned logs; no official score counter read.",
+  "production_code_modified": false
+}

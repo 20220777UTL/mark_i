@@ -1,0 +1,330 @@
+[
+  {
+    "path": "PythonScripts/.gitignore",
+    "sha256": "46b094baa4f5b317d026420b3709fcca2ff0cd539a9f3cb1fcd9313934259f0a"
+  },
+  {
+    "path": "PythonScripts/.python-version",
+    "sha256": "16c863195943df357aff24d69eb6f1f022b5e5a0ca2bcd74df2d8494d54b6e23"
+  },
+  {
+    "path": "PythonScripts/Config.py",
+    "sha256": "9ecebac4e9746aacdefa9f008bf7d3f3cf09f531548523c7f4b6c0057c338ae4"
+  },
+  {
+    "path": "PythonScripts/Global.py",
+    "sha256": "418800ed414bf525310e8657458e8a141945f557dcec297d9e55beb96a8065fe"
+  },
+  {
+    "path": "PythonScripts/InitAllModules.py",
+    "sha256": "bf8d7bd6899bb73b5db2ea4e2d56c6683611f2e2ea9e327d9a937c74d0970339"
+  },
+  {
+    "path": "PythonScripts/main.py",
+    "sha256": "1c0d2df308c8ef8f25f9729e4461550895259a2697d9e23cc5cd9a22ef7a9ae5"
+  },
+  {
+    "path": "PythonScripts/PowerCurveBackend.py",
+    "sha256": "a9411853805cca9743f9a53d73d6b11aac3d5be323fedb1cc42b85f6d0f039be"
+  },
+  {
+    "path": "PythonScripts/pyproject.toml",
+    "sha256": "effd3079c234d2f86bb1ee7a978e7b9430f51f5c07d28000c3b1d57e3be570b7"
+  },
+  {
+    "path": "PythonScripts/README.md",
+    "sha256": "2810d1a2648963e4eda459888bf5b075bf00113c72dd5e92ec684ea94c18eae7"
+  },
+  {
+    "path": "PythonScripts/SelectPlay.py",
+    "sha256": "e2d0001225c15187f210e7bd64fb9c1aa3bca6a5317e28cfb823cdf222d64e11"
+  },
+  {
+    "path": "PythonScripts/test.py",
+    "sha256": "91ae3b6b5cc8bd3ef0fc63d5c63f9527b59b992f24861987e2cbe7d55360b6e1"
+  },
+  {
+    "path": "PythonScripts/uv.lock",
+    "sha256": "8491c55ba09aec800604cd30e8012db467ea0a4bcd64704cd6784023e732ff85"
+  },
+  {
+    "path": "PythonScripts/zss.ini",
+    "sha256": "b3ddd7ecd0a9dd001650fb3972c156984384a72b2ab5c6a80e7a2e9155300ba4"
+  },
+  {
+    "path": "PythonScripts/Algorithm/munkre.py",
+    "sha256": "f01d9635b9c183deafdbb6036b6605cd97a6a1d4b5885111e8275d8eb7da9281"
+  },
+  {
+    "path": "PythonScripts/Algorithm/__init__.py",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "PythonScripts/CppPackage/CppPackage.pyd",
+    "sha256": "6805d7d50eae13c481b9a4326064e86eb632782a5e59ee105855f96b6892c974"
+  },
+  {
+    "path": "PythonScripts/CppPackage/CppPackage.pyi",
+    "sha256": "d475809e2596fc5c4cf1deb77cb10a162cffebd1cc760051323b0e492b956b63"
+  },
+  {
+    "path": "PythonScripts/CppPackage/__init__.py",
+    "sha256": "03c93b3fc79bd6b91949fdea5ae818ef2184d26997d1993404a840c6434800d5"
+  },
+  {
+    "path": "PythonScripts/GameControl/Referee.py",
+    "sha256": "0291cb2f75ab2ebcc089dd834a9f9827d43cc21767c6ceb6d4ad35379cd3c78a"
+  },
+  {
+    "path": "PythonScripts/GameControl/__init__.py",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "PythonScripts/Geometry/GeometryUtils.py",
+    "sha256": "9cda763e6cfcc91769c922b8a08a0fe0326921cf9575b3b8c5d06fb57e2c677c"
+  },
+  {
+    "path": "PythonScripts/Geometry/__init__.py",
+    "sha256": "1442b3892a2e0b25ac91d047347929cadf7b8515dd421d8091c9cd5ae84d5668"
+  },
+  {
+    "path": "PythonScripts/Play/__init__.py",
+    "sha256": "e9a218f3b16054ca15d4abd8fc436c3167b48869baa0d69b0abb25afdea2fcbe"
+  },
+  {
+    "path": "PythonScripts/RoleMatch_LuaStyle/State.py",
+    "sha256": "e432aafd60de776de9d24cdcbe09605e8e8fa88920b2eef28f41372439c9ec1f"
+  },
+  {
+    "path": "PythonScripts/RoleMatch_LuaStyle/StateMachine.py",
+    "sha256": "d6327f253fd774ec59fc77324c5112d8a153396186515f24238ef85f3dc549b0"
+  },
+  {
+    "path": "PythonScripts/RoleMatch_LuaStyle/Task.py",
+    "sha256": "cea3dc9efe74c1658f033eae3bd2ce96714a705999b03543a516e22062c4287f"
+  },
+  {
+    "path": "PythonScripts/RoleMatch_LuaStyle/__init__.py",
+    "sha256": "0157b6bc9e5c5a5c71b76ef4cb9a8b0dcd1e5a33d940e49743939a0954b3db37"
+  },
+  {
+    "path": "PythonScripts/Strategy/AttackInfomation.py",
+    "sha256": "d6b690b664b7762a420e231d2d5767a4696811e63297692475596c07d7617653"
+  },
+  {
+    "path": "PythonScripts/Strategy/__init__.py",
+    "sha256": "406480ae82574c99ec90cea58c2f5f6a7556ee291bb2555e90b4e05c0adf7733"
+  },
+  {
+    "path": "PythonScripts/tests/test_power_curve_backend.py",
+    "sha256": "8c007c492bb304dfb00887cd22d187e6984ef6086d205cd6b158010171505fdd"
+  },
+  {
+    "path": "PythonScripts/tools/power_curve_editor.py",
+    "sha256": "ed4b64b0dbf815cbf4647a4f6f4ee7f0e3ec2df305fdff2f70b0608dcf554761"
+  },
+  {
+    "path": "PythonScripts/tools/prelim_scene.py",
+    "sha256": "08518d3c7827760f85f6408073a695a919dd20cffd1194ee046f9ab2e9c2ce76"
+  },
+  {
+    "path": "PythonScripts/Utils/BufferedCondition.py",
+    "sha256": "56b0cb6e6a770b463e0893d30a22cac102e28b0a435e771187a1ec456f3c52a8"
+  },
+  {
+    "path": "PythonScripts/Utils/__init__.py",
+    "sha256": "2c3d3b16ccf55eafa50842747406878061792d285dd48f0e3103f9ba715f8b80"
+  },
+  {
+    "path": "PythonScripts/Vision/Ball.py",
+    "sha256": "6de9be513a6bbc6c9590be557a55bbc96651c74512ccddcdff0acc6551f5e884"
+  },
+  {
+    "path": "PythonScripts/Vision/Enemy.py",
+    "sha256": "3d58920040917ed6ca71e7e60b896b07956f427c76ad79115bf59458e7a9b690"
+  },
+  {
+    "path": "PythonScripts/Vision/Player.py",
+    "sha256": "f15a930b79cc78f0afbbe95cafa818e0eb4df23aea5f3a95d41c0d0832961b58"
+  },
+  {
+    "path": "PythonScripts/Vision/__init__.py",
+    "sha256": "92054de637cac6749aab9dd24b1b3199751dfd345f80f02479562f877fd8322e"
+  },
+  {
+    "path": "PythonScripts/WorldModel/ChipPower.py",
+    "sha256": "ec84ef484cab2af3d75b4fb5ebfd43e0265d6ea7fb920ec2d1fd3579ca5f47b0"
+  },
+  {
+    "path": "PythonScripts/WorldModel/Conditions.py",
+    "sha256": "d4484e39cb584340e2ee1f9c82dda1d128713597a84ba919244feb11c2c18a5b"
+  },
+  {
+    "path": "PythonScripts/WorldModel/Directions.py",
+    "sha256": "c27426f3a9633384c3035a770a7b36fa4a677239b84d481cea5d665e8bb83eca"
+  },
+  {
+    "path": "PythonScripts/WorldModel/Flags.py",
+    "sha256": "905d938674e435984217306ed8a8d5ee6351cf8f7070f30d05446a0f6c6820a1"
+  },
+  {
+    "path": "PythonScripts/WorldModel/KickPower.py",
+    "sha256": "cf6ae4dd33f0496cfe2cad7aa7a23fb2cd75cf1ddb2665cdcbcff41031bc6b76"
+  },
+  {
+    "path": "PythonScripts/WorldModel/Params.py",
+    "sha256": "ffa41f448bfe61d1494c654372e3ea400c6432845e6ad3798988c481760aba42"
+  },
+  {
+    "path": "PythonScripts/WorldModel/Positions.py",
+    "sha256": "b3685f1562ac41a2f8fae7a3f39fc1142e6d77627393da723e6a85b82f466c2c"
+  },
+  {
+    "path": "PythonScripts/WorldModel/PowerCalculator.py",
+    "sha256": "51cd082d7e050986b42540f4c38bceebbbd94bdb8ef31901bd34db49931c6081"
+  },
+  {
+    "path": "PythonScripts/WorldModel/Precision.py",
+    "sha256": "95fb68329b15da2c2c4da6fdb5354071ad5b565c7e618a99ac6d38d3017aee76"
+  },
+  {
+    "path": "PythonScripts/WorldModel/__init__.py",
+    "sha256": "9b36d2d80bd5f4171e0fa171e593b60c73b2a3fa7e0303681f019dbeaef3807a"
+  },
+  {
+    "path": "PythonScripts/Play/Normal/ExampleNormal.py",
+    "sha256": "951060da5d53189a44a5258830ad381645655773d8eb10c35be02e82fc8009e6"
+  },
+  {
+    "path": "PythonScripts/Play/Normal/ExampleNormalPlay.py",
+    "sha256": "95cf0ea1c9754449bc68026c7852fdc58335a6eefad71cf8fd9753b73e21fb38"
+  },
+  {
+    "path": "PythonScripts/Play/Normal/GoalieFool.py",
+    "sha256": "4a0a3408f44f233b6d7b9c68fb9685152fbfa275ef36ae869f1f233c5b361690"
+  },
+  {
+    "path": "PythonScripts/Play/Normal/PracticeNativeGoalie.py",
+    "sha256": "16646d776aec8fde81d6fc79ac26f658757ebb4b258d093a647a216b09fd6512"
+  },
+  {
+    "path": "PythonScripts/Play/Normal/PreliminaryAttack.py",
+    "sha256": "4872e60900ff7124f6ed7a3c6e3de3000bc12cc1fe2f63424c6df8036ba662d0"
+  },
+  {
+    "path": "PythonScripts/Play/Normal/PreliminaryAttackV2.py",
+    "sha256": "c509ced1ab6014668a3c69e30dd7c7876f470a765d31576ebcb05ad7054bd330"
+  },
+  {
+    "path": "PythonScripts/Play/Normal/PreliminaryPassCombo.py",
+    "sha256": "1b71c1cf054757a5c10edc29e1cebdfacb559d31f2bace5a0e385a75cf7255ae"
+  },
+  {
+    "path": "PythonScripts/Play/Normal/prelim_v2_logic.py",
+    "sha256": "97941fb27cd5bf05a232609005f8f6098e5b3e7412bd099e3f90bee11ab0b599"
+  },
+  {
+    "path": "PythonScripts/Play/RefPlay/ExampleFreeKick.py",
+    "sha256": "72d2356706e6affa2b6d9850fde54f5dac678389339c04b561422ec841c34fd0"
+  },
+  {
+    "path": "PythonScripts/Play/RefPlay/ExampleFreeKickDefend.py",
+    "sha256": "25ba4fdcc7fb63fe36ad4eee2a56c77dd4cbea1c79f646a32b5c9ee799418aa0"
+  },
+  {
+    "path": "PythonScripts/Play/RefPlay/ExampleKickOff.py",
+    "sha256": "7d244e10ddf7f23ec4e773679262c365c523522f34ce32cd8cc15c2c42e4f7b5"
+  },
+  {
+    "path": "PythonScripts/Play/RefPlay/ExampleKickOffDefend.py",
+    "sha256": "8ecfbaf8fa04c431909a6317097677590f37b67e4a50dce01ad88433594a373b"
+  },
+  {
+    "path": "PythonScripts/Play/RefPlay/ExampleRef.py",
+    "sha256": "3f5d9401ffe96b91876611385c16e65e5a1a2a14de75b022027261202fb543eb"
+  },
+  {
+    "path": "PythonScripts/Play/RefPlay/GameHalt.py",
+    "sha256": "bf555d1bfa168c1c890abb62c36317f3aa0314557d16ad76d972eb8f35f8bdea"
+  },
+  {
+    "path": "PythonScripts/Play/RefPlay/GameStop.py",
+    "sha256": "b5e559e6dd5648f5ac3db3216f883ae50d2db0e142fb4cb2ec92e8118482a328"
+  },
+  {
+    "path": "PythonScripts/Play/RefPlay/OfficialSupport.py",
+    "sha256": "5253479f4f003b5a3cdbd09668a891b20d30e063bedd866c7e4dffd570758317"
+  },
+  {
+    "path": "PythonScripts/Play/RefPlay/OurTimeout.py",
+    "sha256": "2166647b260d0b74272a541a26a8598f567e2e34b1d2f2685e43f51e3f3a93b5"
+  },
+  {
+    "path": "PythonScripts/Play/RefPlay/__init__.py",
+    "sha256": "fde61bc5b881c3b99645913befc43541e2dde2558d81ff37d47ccf07be3e97ee"
+  },
+  {
+    "path": "PythonScripts/Play/Test/BareRushToV4.py",
+    "sha256": "30c4ea0733f40ad4563766c0f980f3172a9b07425ae8c9c3e4f30743a2344659"
+  },
+  {
+    "path": "PythonScripts/Play/Test/BareSimpleGoTo.py",
+    "sha256": "8d6dffaf8793a926dde1060fdb1fafede7009bd4642569ffc90c1f151c5c2e0d"
+  },
+  {
+    "path": "PythonScripts/Play/Test/ExampleTest.py",
+    "sha256": "4440efd2bfaa3ce907f0f6698cef46843b65154584b1fafbd274675e20a039e0"
+  },
+  {
+    "path": "PythonScripts/Play/Test/MotionCalibration.py",
+    "sha256": "79429983db541612fa92cf95b39e3c538ae9052f158923c0f084644bcfac8b54"
+  },
+  {
+    "path": "PythonScripts/Play/Test/Test_Goalie2022.py",
+    "sha256": "f2a7e686e7da382f2b55033c29ae533c126fbe6106b3920e28cc88e74fb6d092"
+  },
+  {
+    "path": "PythonScripts/RoleMatch_LuaStyle/Play/__init__.py",
+    "sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6"
+  },
+  {
+    "path": "PythonScripts/RoleMatch_LuaStyle/Skills/Actions.py",
+    "sha256": "0a2d2e4f01a5b1c91523d129d4b9fe45f967be504dc25f0f7ac0332cbdad31f9"
+  },
+  {
+    "path": "PythonScripts/RoleMatch_LuaStyle/Skills/Skill.py",
+    "sha256": "1a69b2c95b8b6624353a5cec5fb7d3b109260441f68f88faa41de7cc528cb595"
+  },
+  {
+    "path": "PythonScripts/RoleMatch_LuaStyle/Skills/__init__.py",
+    "sha256": "95d45ede6b13ec42b8e04a812e2409c21eae2f04f07d9160813e3da15c394f8b"
+  },
+  {
+    "path": "PythonScripts/RoleMatch_LuaStyle/Play/Test/__init__.py",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "zss.ini",
+    "sha256": "ca90c9400d6cb83a8c42173225e41852282a627b03c20bea9262e755676513e3"
+  },
+  {
+    "path": "zss_simulator.ini",
+    "sha256": "bd9e24ecd1901c783f4e1b266ad44418c2ff7ac9df898dede5ffc2287a9eb9af"
+  },
+  {
+    "path": "practice_mode.txt",
+    "sha256": "8ca137e61d319996d172ecf921cbf6f1d952ec9151eb3e81925d267eaac2be85"
+  },
+  {
+    "path": "combo_stage.txt",
+    "sha256": "d029da490df6e456fedad8259b161518c53b2915257d168362a2c9ede885448a"
+  },
+  {
+    "path": "data/power_curve/active_curve.json",
+    "sha256": "4554e40aa0afd75f11ceefb2c12dc7dd56b458240f77ecdc181c70517041b118"
+  },
+  {
+    "path": "data/power_curve/default_curve.json",
+    "sha256": "cc2d486c7cac9f5a3a5ce0afff2a9f168da95b294e3bf402fb13795d540cb07f"
+  }
+]

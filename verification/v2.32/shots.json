@@ -1,0 +1,82 @@
+[
+  {
+    "index": 1,
+    "round": 1,
+    "departure_seconds": 28.69,
+    "goal_line_seconds": 29.169,
+    "goal_line_y": 360.5,
+    "result": "goal"
+  },
+  {
+    "index": 2,
+    "round": 4,
+    "departure_seconds": 54.332,
+    "goal_line_seconds": 54.76,
+    "goal_line_y": 404.6,
+    "result": "goal"
+  },
+  {
+    "index": 3,
+    "round": 5,
+    "departure_seconds": 71.412,
+    "goal_line_seconds": 72.07,
+    "goal_line_y": 489.4,
+    "result": "goal"
+  },
+  {
+    "index": 4,
+    "round": 6,
+    "departure_seconds": 87.152,
+    "goal_line_seconds": 87.756,
+    "goal_line_y": 336.1,
+    "result": "goal"
+  },
+  {
+    "index": 5,
+    "round": 8,
+    "departure_seconds": 111.261,
+    "goal_line_seconds": 111.847,
+    "goal_line_y": 422.0,
+    "result": "goal"
+  },
+  {
+    "index": 6,
+    "round": 9,
+    "departure_seconds": 128.127,
+    "goal_line_seconds": 128.616,
+    "goal_line_y": 379.3,
+    "result": "goal"
+  },
+  {
+    "index": 7,
+    "round": 10,
+    "departure_seconds": 144.24,
+    "goal_line_seconds": 144.989,
+    "goal_line_y": 766.3,
+    "result": "wide"
+  },
+  {
+    "index": 8,
+    "round": 11,
+    "departure_seconds": 159.331,
+    "goal_line_seconds": 159.942,
+    "goal_line_y": 839.8,
+    "result": "wide"
+  },
+  {
+    "index": 9,
+    "round": 12,
+    "departure_seconds": 176.047,
+    "goal_line_seconds": 176.718,
+    "goal_line_y": 290.4,
+    "result": "goal"
+  },
+  {
+    "index": 10,
+    "round": 13,
+    "departure_seconds": 192.752,
+    "goal_line_seconds": 193.225,
+    "goal_line_y": 357.6,
+    "result": "goal"
+  }
+]

@@ -42,3 +42,6 @@ __pycache__/
 *.dSYM/
 *.o
 *.a
+
+# Optional local Python runtime
+/Python312/

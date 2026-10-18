@@ -16,7 +16,7 @@ class NormalState(State):
                     # "E": Task(SimpleGoTo(CGeoPoint(1000, 1500), 0, 0)),
                     # "G": Task(SimpleGoTo(CGeoPoint(-3518,-3012), 0, 0)), # 应该会因为Config.py中的固定车号配置而被覆盖
                     # "H": Task(SimpleGoTo(Player.Pos("E") + CVector(-200,-200), 0, 0), fixedNumber=3), # 测试传统方法的效果
-                    "A": Task(Skill.NormalShoot(12700, False), fixedNumber=2),
+                    "A": Task(Skill.NormalShoot(12700, False), fixedNumber=1),
                     "G": Task(Skill.Goalie()),}
 
     def getMatchString(self):
